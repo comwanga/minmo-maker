@@ -4,9 +4,9 @@
 
 Minmo Maker began as a balanced and profitable Lightning swap-making policy layer. Phase 1 verified a proprietary SDK boundary, and Phase 2 built careful integer-safe maker inventory and projection models around its read-only market data.
 
-## What the exploration revealed
+## What mentor review revealed
 
-Hackathon mentor feedback sharpened an architectural problem exposed by that work: the proof of concept depended on externally controlled infrastructure, private credentials, and service availability. The installed SDK also did not verify the Lightning node, peer, channel-balance, routing, fee, or rebalancing capabilities that the original thesis required.
+External review feedback sharpened an architectural problem exposed by that work: the proof of concept depended on externally controlled infrastructure, private credentials, and service availability. The installed SDK also did not verify the Lightning node, peer, channel-balance, routing, fee, or rebalancing capabilities that the original thesis required.
 
 This was productive engineering discovery, not discarded effort. Inspecting the actual package and refusing to invent missing capabilities produced the evidence needed to pivot early.
 
