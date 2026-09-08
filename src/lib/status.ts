@@ -1,13 +1,12 @@
-import type { FoundationStatus } from "../domain/foundation-status";
-import { isMinmoConfigured } from "./minmo/config";
+import type { ProjectStatus } from "../domain/project-status";
 
-type Environment = Readonly<Record<string, string | undefined>>;
-
-export function getFoundationStatus(environment: Environment = process.env): FoundationStatus {
+export function getProjectStatus(): ProjectStatus {
   return {
     application: "ready",
-    minmoConfiguration: isMinmoConfigured(environment) ? "configured" : "missing",
-    minmoConnectivity: "not_tested",
-    phase: "maker_state",
+    project: "PactAgent",
+    phase: "open_protocol_foundation",
+    nostr: "modeled_not_connected",
+    cashu: "modeled_not_connected",
+    ai: "not_implemented",
   };
 }

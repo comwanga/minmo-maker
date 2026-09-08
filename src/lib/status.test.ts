@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { getFoundationStatus } from "./status";
+import { getProjectStatus } from "./status";
 
-describe("foundation status", () => {
-  it("reports readiness without claiming remote connectivity", () => {
-    expect(getFoundationStatus({ MINMO_PARTNER_ID: "partner-id", MINMO_API_KEY: "api-key" })).toEqual({
+describe("PactAgent status", () => {
+  it("reports the open-protocol foundation without claiming live functionality", () => {
+    expect(getProjectStatus()).toEqual({
       application: "ready",
-      minmoConfiguration: "configured",
-      minmoConnectivity: "not_tested",
-      phase: "maker_state",
+      project: "PactAgent",
+      phase: "open_protocol_foundation",
+      nostr: "modeled_not_connected",
+      cashu: "modeled_not_connected",
+      ai: "not_implemented",
     });
-  });
-
-  it("reports missing configuration", () => {
-    expect(getFoundationStatus({}).minmoConfiguration).toBe("missing");
   });
 });

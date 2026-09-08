@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { getFoundationStatus } from "@/lib/status";
+import { getProjectStatus } from "@/lib/status";
 
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  return NextResponse.json(getFoundationStatus(), {
+  return NextResponse.json(getProjectStatus(), {
     headers: { "Cache-Control": "no-store" },
   });
 }
