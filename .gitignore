@@ -12,3 +12,4 @@ next-env.d.ts
 
 # Local-only project phase instructions
 phase*.md
+pivot.md
