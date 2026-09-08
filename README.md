@@ -1,89 +1,63 @@
 # Minmo Maker
 
-**Balanced & Profitable Bitcoin Swap Making**
+**Balanced & Profitable Lightning Swap Making**
 
-Minmo Maker is an open-source policy engine for Bitcoin liquidity providers.
+Minmo Maker is an open-source, agent-assisted liquidity policy engine for balanced and profitable Lightning swap making. It is being built for BOSS Battle 2026 with **Freedom Stack** as its primary direction and a limited, bounded **Machine Money** layer as a secondary direction.
 
-It uses the [`@minmoto/sdk`] Minmo Partner API client to access Bitcoin/local-currency rates, swaps, wallets, agents, and related market activity.
+The eventual system will normalize Minmo, market, and Lightning state; apply deterministic pricing, profitability, inventory-risk, and rebalance policy; and only then allow an agent to explain or propose actions. Deterministic calculations and authorization remain authoritative.
 
-## The Problem
+## Current phase
 
-A Bitcoin swap maker cannot remain profitable by applying the same spread to every trade.
+Phase 1 establishes the application foundation only:
 
-Every swap changes the maker's inventory.
+- Next.js App Router, React, and strict TypeScript;
+- a server-only `@minmoto/sdk` client boundary;
+- validated server configuration;
+- application-owned readiness types and a side-effect-free status route;
+- focused tests and explicit SDK findings.
 
-Persistent one-sided order flow can deplete BTC or local-currency reserves, while replenishing liquidity carries a real cost.
+Pricing policy, simulation, AI, agents, Lightning-node integration, rebalancing, and swap execution are not implemented.
 
-The maker therefore needs to continuously answer:
+## Technology
 
-* What should I quote?
-* Should I accept this swap?
-* What will this trade do to my liquidity?
-* When is rebalancing economically justified?
-* What is the minimum price that keeps this trade profitable?
+- Node.js 22 or newer (required by `@minmoto/sdk` 0.2.0)
+- Next.js 16
+- TypeScript 5.9 in strict mode
+- Vitest and ESLint
 
-## What We Are Building
+## Local setup
 
-Minmo Maker evaluates each proposed swap using:
-
-* current BTC and local-currency inventory;
-* current market rates;
-* recent order flow;
-* execution and settlement costs;
-* target maker margin;
-* inventory imbalance;
-* reserve requirements;
-* expected rebalancing costs; and
-* projected post-trade risk.
-
-The policy engine then produces a decision:
-
-**QUOTE · ACCEPT · REJECT · REBALANCE · WAIT**
-
-Every decision is explainable from the inputs that produced it.
-
-## Initial Policy Model
-
-A quote is constructed from:
-
-```text
-Quote Spread =
-    Base Margin
-  + Execution Cost
-  + Inventory Risk Premium
-  + Flow Pressure Premium
-  + Volatility Buffer
+```powershell
+npm install
+Copy-Item .env.example .env.local
+npm run dev
 ```
 
-A swap is accepted only when the expected profit meets the maker's minimum profitability requirement and the projected inventory remains within configured safety limits.
+Set the two values in `.env.local` only when Minmo configuration is needed:
 
-## Planned Deliverables
-
-The initial milestone is one complete path:
-
-```text
-Minmo market state
-        ↓
-Incoming swap
-        ↓
-Inventory analysis
-        ↓
-Dynamic quote
-        ↓
-Profit calculation
-        ↓
-Accept / Reject decision
-        ↓
-Projected inventory
-        ↓
-Outcome
+```dotenv
+MINMO_PARTNER_ID=
+MINMO_API_KEY=
 ```
 
-The project will subsequently add simulation, strategy comparison, maker analytics and Lightning-liquidity integration.
+These names are **Minmo Maker application conventions** mapped to the SDK's verified `partnerId` and `apiKey` constructor options. They are never exposed through `NEXT_PUBLIC_` variables. The foundation page works without credentials and accurately reports configuration as missing.
 
-## Status
+## Commands
 
-🚧 Development started September 7, 2026.
+```sh
+npm run dev        # local development
+npm run lint       # lint source and configuration
+npm run typecheck  # strict TypeScript check
+npm test           # focused unit tests
+npm run build      # production build
+npm start          # serve a production build
+```
+
+## Server-only Minmo boundary
+
+Browser code never imports the SDK client. `src/lib/minmo/client.ts` is marked with `server-only`, centralizes construction, and reads validated configuration from `src/lib/minmo/config.ts`. No secrets are returned by `GET /api/status`; the route reports only application readiness, whether both variables are present, and that remote connectivity has not been tested.
+
+See [architecture](docs/architecture.md) and [SDK verification](docs/sdk-verification.md) for implemented/planned boundaries and package-backed findings.
 
 ## License
 
