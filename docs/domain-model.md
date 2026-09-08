@@ -1,31 +1,22 @@
-# Phase 2 domain model
+# PactAgent domain model
 
-Minmo Maker owns its economic types so policy code is stable even if an SDK response changes. External data is validated once at the integration boundary; the domain never imports `@minmoto/sdk`.
+## Retained primitives
 
-## Units
+The previous engineering phase established useful deterministic foundations. `Sats` remains a branded `bigint`, decimal BTC conversion still accepts strings, and domain validation continues to reject ambiguous or negative money. General strict TypeScript, error, testing, and UI foundations are retained.
 
-| Concept | Representation | Unit / invariant |
-| --- | --- | --- |
-| `Sats` | branded `bigint` | integer satoshis; non-negative |
-| `KesMinor` | branded `bigint` | integer hundredths of KES; non-negative |
-| `BasisPoints` | branded `number` | integer 0–10,000; 10,000 = 100% |
-| `KesMinorPerBtc` | two positive `bigint`s | exact rational KES minor units per one BTC |
-| `ExactRatio` | two `bigint`s | exact part/total ratio used before optional basis-point rounding |
+## Protocol-facing models
 
-Decimal BTC and KES input is accepted only as strings and converted explicitly. This avoids IEEE-754 rounding in monetary balances.
+`NostrIdentity` contains only a validated public key and public relay URLs. `UnsignedNostrEvent` deliberately excludes `id` and `sig`; `NostrSigner` defines a future signing boundary without accepting or exposing a private key.
 
-## Models
+`PontmoreAgentDefinition` models a PIP-00 kind-30360 draft and validates its required tags and minimum versioned content. PIP-00 currently names content fields without fixing their nested value schemas, so PactAgent v1 documents `capabilities.names`, `capabilities.settlement_networks`, string policy references, and string escrow references as application conventions. P001/P002 identifiers and detailed policies remain separate PactAgent fields—not PIP numbers or additions to the protocol.
 
-`BtcKesMarketRate` contains the fixed `BTC/KES` pair, an exact rational rate, observation timestamp, and source. The Minmo normalizer rejects wrong pairs, non-positive or non-finite rates, invalid timestamps, and empty sources.
+`PontmoreEscrowDescriptor` models the current PIP-01 public compatibility object. Its strict parser rejects unsupported fields, which prevents token or secret fields from entering the public descriptor. `CashuEscrowPlan` separately records application funding/release/refund intent and a recoverable PIP-03 timeout; it has no execution method.
 
-`MakerInventory` contains the maker's available BTC sats, KES minor units, and observation timestamp. It is a snapshot of economic inventory, not a wallet or Lightning-channel model.
+`PontmoreTransitionDraft` models the required PIP-02 transition content. `DocumentSummaryLifecycleState` is a deliberately narrow application-specific vocabulary because the current PIP-02 draft does not define canonical state values. Validation enforces allowed changes, one swap identifier, chronological append-only events, and `prev_state` coherence.
 
-`SwapIntent` is a hypothetical customer action with `BUY_BTC` and `SELL_BTC` variants. Each carries positive BTC and KES legs. It has no execution method.
+## Application roles
 
-`ProjectedInventory` is the deterministic result of applying a `SwapIntent` to `MakerInventory`. The calculation performs no I/O and rejects insufficient BTC or KES rather than allowing negative balances.
+- **P001 Requester:** allows only `document-summary`, has a 500-sat total budget, a 450-sat provider-price ceiling, a 15-minute escrow maximum, Cashu-only settlement, and auto-release only after deterministic completion checks.
+- **P002 Provider:** advertises `document-summary`, requires at least 200 sats, accepts text/plain or PDF up to 1 MB, and limits execution to five minutes.
 
-`MakerPolicyInputs` groups market rate, current inventory, proposed swap, projected inventory, exact current/projected ratios, a target BTC ratio, and minimum BTC reserve. It deliberately contains no decision, spread, score, or recommendation.
-
-## Serialization
-
-JSON cannot encode `bigint`. The read-only market route serializes rational numerator and denominator as decimal strings. Domain calculations retain `bigint`; serialization is an API-boundary concern.
+`discoverCompatibleProviders` performs local fixture discovery. `evaluateServiceOffer` applies deterministic capability, identity, price, budget, settlement-network, escrow-reference, and duration constraints. It returns a structured authorization result; it neither signs nor executes anything.

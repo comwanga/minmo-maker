@@ -1,64 +1,54 @@
-# Minmo Maker
+# PactAgent
 
-**Balanced & Profitable Lightning Swap Making**
+**Autonomous agents contracting and settling over open Bitcoin protocols.**
 
-Minmo Maker is an open-source, agent-assisted liquidity policy engine for balanced and profitable Lightning swap making. It is being built for BOSS Battle 2026 with **Freedom Stack** as its primary direction and a limited, bounded **Machine Money** layer as a secondary direction.
-
-The eventual system will normalize Minmo, market, and Lightning state; apply deterministic pricing, profitability, inventory-risk, and rebalance policy; and only then allow an agent to explain or propose actions. Deterministic calculations and authorization remain authoritative.
+PactAgent is an open-source framework for bounded economic agents that discover each other through Nostr and Pontmore, negotiate narrow service agreements, and target settlement through Cashu ecash escrow. It builds on Pontmore; it is not the Pontmore protocol.
 
 ## Current phase
 
-Phase 2 establishes a deterministic BTC/KES maker-state layer:
+The first pivot phase provides a local, deterministic open-protocol foundation:
 
-- Next.js App Router, React, and strict TypeScript;
-- a server-only `@minmoto/sdk` client boundary;
-- a verified read-only `otc.rates.get(BTC, KES)` adapter and normalized market model;
-- integer-safe sats and KES minor-unit balances;
-- explicit maker inventory, hypothetical swaps, projected balances, and exact inventory ratios;
-- a narrow read-only market endpoint and a clearly labeled deterministic UI fixture.
+- independent public Nostr identities for P001 Requester and P002 Provider;
+- PIP-00-compatible agent-definition drafts and local capability discovery;
+- deterministic pricing, budget, duration, network, and escrow compatibility checks;
+- a PIP-01 `cashu_escrow` descriptor with a PIP-03 recoverable timeout plan;
+- PIP-02 event kinds and coherent application lifecycle transitions;
+- one bounded `document-summary` fixture and a transparent UI walkthrough.
 
-Dynamic pricing, accept/reject policy, AI, Lightning-node/channel integration, rebalancing, and swap execution are intentionally not implemented.
+No relay publishing, event signing, AI execution, Cashu token handling, mint connection, or real funds movement exists yet. Private documents, full results, Cashu tokens, and key material are not part of public models.
 
 ## Technology
 
-- Node.js 22 or newer (required by `@minmoto/sdk` 0.2.0)
-- Next.js 16
-- TypeScript 5.9 in strict mode
+- Node.js 22 or newer
+- Next.js 16 and React 19
+- strict TypeScript 5.9
 - Vitest and ESLint
 
 ## Local setup
 
 ```powershell
 npm install
-Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Set the two values in `.env.local` only when Minmo configuration is needed:
-
-```dotenv
-MINMO_PARTNER_ID=
-MINMO_API_KEY=
-```
-
-These names are **Minmo Maker application conventions** mapped to the SDK's verified `partnerId` and `apiKey` constructor options. They are never exposed through `NEXT_PUBLIC_` variables. The foundation page works without credentials and accurately reports configuration as missing.
+No credentials or external services are needed for the deterministic fixtures and tests.
 
 ## Commands
 
 ```sh
-npm run dev        # local development
-npm run lint       # lint source and configuration
-npm run typecheck  # strict TypeScript check
-npm test           # focused unit tests
-npm run build      # production build
-npm start          # serve a production build
+npm run dev
+npm run lint
+npm run typecheck
+npm test
+npm run build -- --webpack
+npm start
 ```
 
-## Server-only Minmo boundary
+## Trust boundary
 
-Browser code never imports the SDK client. `src/lib/minmo/client.ts` is marked with `server-only`, centralizes construction, and reads validated configuration from `src/lib/minmo/config.ts`. No secrets are returned by `GET /api/status` or `GET /api/market`. Without credentials, the market endpoint explicitly returns `not_configured`; the on-page projection remains visibly labeled as a demo fixture.
+AI will be a proposal layer, not the trust root. Deterministic policy authorizes economic actions, and a future isolated signer will sign protocol events without exposing private keys to the model. PIP-02 public history remains authoritative; private task and settlement payloads belong in the companion private channel.
 
-See [architecture](docs/architecture.md), [domain model](docs/domain-model.md), and [SDK verification](docs/sdk-verification.md) for the implemented boundaries and package-backed findings.
+See the [architecture](docs/architecture.md), [domain model](docs/domain-model.md), and [pivot record](docs/pivot.md).
 
 ## License
 
