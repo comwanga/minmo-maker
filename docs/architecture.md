@@ -1,84 +1,72 @@
 # Architecture
 
-## Status legend
-
-- **IMPLEMENTED** — present and tested in Phase 1.
-- **PLANNED** — an architectural intention, not functioning software.
-- **UNVERIFIED** — evidence is insufficient; no implementation may be inferred.
-
-## System direction
+## Phase 2 status
 
 ```text
-Sources
-  +-- Minmo SDK adapter                         IMPLEMENTED (construction only)
-  +-- Minmo remote data                         PLANNED
-  +-- Lightning node/channel state              UNVERIFIED
-             |
-             v
-Normalized maker state                          PLANNED
-             |
-             v
-Deterministic policy engine                     PLANNED
-  +-- pricing                                   PLANNED
-  +-- profitability                             PLANNED
-  +-- inventory risk                            PLANNED
-  +-- flow pressure                             PLANNED
-  +-- rebalance economics                       PLANNED
-             |
-             v
-Structured policy decision                      PLANNED
-             |
-             v
-Agent-assisted layer (explain / propose)        PLANNED
-             |
-             v
-Deterministic authorization guardrails          PLANNED
-             |
-             v
-Execution                                       PLANNED
+@minmoto/sdk `otc.rates.get(BTC, KES)`       IMPLEMENTED (read-only)
+                 |
+                 v
+Minmo rate adapter + response validation     IMPLEMENTED
+                 |
+                 v
+Application-owned BTC/KES market rate        IMPLEMENTED
+                 |
+                 +--------------------+
+                 v                    v
+Maker inventory                    Hypothetical swap
+                 |                    |
+                 +----------+---------+
+                            v
+                  Projected inventory          IMPLEMENTED
+                            |
+                            v
+                  Exact inventory ratios       IMPLEMENTED
+                            |
+                            v
+                  Maker policy inputs          IMPLEMENTED
+                            |
+                            v
+                  Maker policy engine          DEFERRED
 ```
 
-Phase 1 implements the browser/server separation, configuration validation, SDK client construction boundary, application-owned foundation status, a UI, and a read-only status route. It does not fetch remote Minmo data.
+Phase 2 supplies economic inputs. It does not price, approve, reject, execute, or rebalance a swap.
 
-## Runtime boundary
+## Server and SDK boundary
 
-```text
-Browser UI
-    |
-    v
-Next.js server boundary
-    |
-    +-- application status (no secrets, no remote mutation)
-    |
-    v
-server-only Minmo client factory
-    |
-    v
-@minmoto/sdk
+`src/lib/minmo/client.ts` remains the only SDK client-construction boundary and is marked `server-only`. The narrow adapter in `src/lib/minmo/rate-adapter.ts` calls the installed SDK 0.2.0 declaration-backed read method:
+
+```ts
+client.otc.rates.get(Currency.BTC, Currency.KES)
 ```
 
-The `server-only` marker makes importing the privileged client into a Client Component a build-time error. SDK construction is centralized. Configuration errors name missing variables but never include their values. There are no financial commands in the application.
+The SDK declares this as `get(baseCurrency: Currency, targetCurrency: Currency): Promise<FxRateResponse>` and implements it as a GET request to `/fx/rates/BTC/KES`. The raw response is accepted as `unknown`, validated, and immediately mapped to `BtcKesMarketRate`; SDK types do not cross into domain code.
 
-## Domain boundary
+Credentials stay in `MINMO_PARTNER_ID` and `MINMO_API_KEY` on the server. `GET /api/market` returns only a serialized application-owned state. It explicitly reports `not_configured`, `unavailable`, or `invalid_response`; it never returns secrets or raw SDK error details. No credentials were available during Phase 2, so remote connectivity remains untested.
 
-`FoundationStatus` is owned by Minmo Maker and contains only Phase 1 readiness information. It does not reuse an SDK response shape. Future normalized financial types should be added only alongside a real use case and an explicit mapper from verified external data.
+## Economic-state boundary
 
-## Future Machine Money boundary
+All BTC amounts are integer satoshis (`bigint`). All KES amounts are integer minor units (`bigint`, 100 per KES). The SDK rate is KES per BTC and arrives as a JavaScript number; at the adapter boundary its serialized decimal value is converted to an exact rational measured in KES minor units per BTC. Calculations after normalization use integer arithmetic only.
 
-The intended modes are **OBSERVE**, **ADVISE**, **APPROVAL**, and **AUTONOMOUS**. They are planned concepts only. A future agent consumes structured state and deterministic policy outputs; it may explain or propose, but deterministic code calculates money, validates reserves and limits, authorizes actions, and controls execution. No agent or AI code exists in Phase 1.
+Inventory projection is pure:
 
-## Verified SDK Surface
+- `BUY_BTC` is the customer's direction: the maker gives BTC and receives KES.
+- `SELL_BTC` is the customer's direction: the maker receives BTC and gives KES.
+- A projection that would make either balance negative throws `InsufficientInventoryError`.
 
-Package-backed findings are recorded in [SDK verification](sdk-verification.md). At a high level, version 0.2.0 verifies Partner account/settings/analytics/team resources, Minmo Pay, OTC rates/swaps/agents, wallets, escrow, and typed event subscriptions. These SDK capabilities are not Minmo Maker features until deliberately integrated.
+Portfolio valuation places BTC value and KES value on one exact rational scale. A zero-value portfolio returns an explicit `empty` state because its ratios are undefined. Basis points are produced only as a rounded display/policy boundary.
 
-The SDK includes Lightning as a payment channel and accepts Lightning invoices/addresses in payment data. Wallet declarations also expose Lightning receive/send-related inputs. This does **not** verify access to Lightning nodes, peers, channel balances, routing, channel fees, or rebalancing.
+See [Domain model](domain-model.md) for units and invariants.
 
-## Unverified / Future Investigation
+## Lightning boundary
 
-- Lightning node identity and operational connection model;
-- channel inventory, local/remote balances, inbound/outbound liquidity, peers, routing, and channel fees;
-- channel rebalancing capabilities and economics;
-- which Minmo read models should be normalized for maker policy;
-- production credential capabilities and connectivity;
-- webhook delivery formats;
-- requirements for deterministic policy, authorization, and execution.
+The installed SDK verifies Lightning payment-related inputs, but not node identity, peers, channels, local/remote balances, inbound/outbound liquidity, routing, channel fees, or channel rebalancing. Phase 2 does not invent or simulate those capabilities.
+
+Future economic state may combine Minmo data with a separately verified Lightning-liquidity adapter. That adapter is not implemented.
+
+## Intentionally deferred
+
+- dynamic spreads and quote pricing;
+- profitability, volatility, risk, and flow-pressure policy;
+- accept/reject decisions and rebalance recommendations;
+- swap execution, BTC sending, wallet changes, and channel operations;
+- database persistence, customer accounts, M-Pesa, KYC, AI, Nostr, and Ecash.

@@ -8,6 +8,6 @@ export function getFoundationStatus(environment: Environment = process.env): Fou
     application: "ready",
     minmoConfiguration: isMinmoConfigured(environment) ? "configured" : "missing",
     minmoConnectivity: "not_tested",
-    phase: "foundation",
+    phase: "maker_state",
   };
 }

@@ -6,5 +6,5 @@ export interface FoundationStatus {
   application: "ready";
   minmoConfiguration: ConfigurationStatus;
   minmoConnectivity: ConnectivityStatus;
-  phase: "foundation";
+  phase: "maker_state";
 }

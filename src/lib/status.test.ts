@@ -8,7 +8,7 @@ describe("foundation status", () => {
       application: "ready",
       minmoConfiguration: "configured",
       minmoConnectivity: "not_tested",
-      phase: "foundation",
+      phase: "maker_state",
     });
   });
 

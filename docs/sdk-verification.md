@@ -50,3 +50,7 @@ The SDK exports `MinmoSdkError`, `MinmoApiError`, `MinmoAuthenticationError`, `M
 ## Discrepancies and limits
 
 No contradiction was found between the published README, metadata, and declarations for the client construction used here. The README is descriptive; declarations are the evidence for exact signatures. Connectivity and credential permissions were not tested because no credentials were supplied. Capabilities describe the SDK surface, not confirmed access for a Partner account.
+
+## Phase 2 rate integration
+
+Phase 2 uses exactly `client.otc.rates.get(Currency.BTC, Currency.KES)`. The installed declarations type it as a read returning `FxRateResponse`; the installed runtime issues `GET /fx/rates/BTC/KES`. Its response is normalized into application-owned data before use. This call was not exercised against the remote service because Minmo credentials were unavailable.

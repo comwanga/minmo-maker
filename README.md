@@ -8,15 +8,16 @@ The eventual system will normalize Minmo, market, and Lightning state; apply det
 
 ## Current phase
 
-Phase 1 establishes the application foundation only:
+Phase 2 establishes a deterministic BTC/KES maker-state layer:
 
 - Next.js App Router, React, and strict TypeScript;
 - a server-only `@minmoto/sdk` client boundary;
-- validated server configuration;
-- application-owned readiness types and a side-effect-free status route;
-- focused tests and explicit SDK findings.
+- a verified read-only `otc.rates.get(BTC, KES)` adapter and normalized market model;
+- integer-safe sats and KES minor-unit balances;
+- explicit maker inventory, hypothetical swaps, projected balances, and exact inventory ratios;
+- a narrow read-only market endpoint and a clearly labeled deterministic UI fixture.
 
-Pricing policy, simulation, AI, agents, Lightning-node integration, rebalancing, and swap execution are not implemented.
+Dynamic pricing, accept/reject policy, AI, Lightning-node/channel integration, rebalancing, and swap execution are intentionally not implemented.
 
 ## Technology
 
@@ -55,9 +56,9 @@ npm start          # serve a production build
 
 ## Server-only Minmo boundary
 
-Browser code never imports the SDK client. `src/lib/minmo/client.ts` is marked with `server-only`, centralizes construction, and reads validated configuration from `src/lib/minmo/config.ts`. No secrets are returned by `GET /api/status`; the route reports only application readiness, whether both variables are present, and that remote connectivity has not been tested.
+Browser code never imports the SDK client. `src/lib/minmo/client.ts` is marked with `server-only`, centralizes construction, and reads validated configuration from `src/lib/minmo/config.ts`. No secrets are returned by `GET /api/status` or `GET /api/market`. Without credentials, the market endpoint explicitly returns `not_configured`; the on-page projection remains visibly labeled as a demo fixture.
 
-See [architecture](docs/architecture.md) and [SDK verification](docs/sdk-verification.md) for implemented/planned boundaries and package-backed findings.
+See [architecture](docs/architecture.md), [domain model](docs/domain-model.md), and [SDK verification](docs/sdk-verification.md) for the implemented boundaries and package-backed findings.
 
 ## License
 
