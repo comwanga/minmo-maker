@@ -1,0 +1,105 @@
+import { createNostrIdentity } from "../domain/nostr";
+import { btcToSats } from "../domain/money";
+import type { ProviderAgent, RequesterAgent, ServiceOffer } from "../domain/pact-agents";
+import { createPontmoreAgentDefinition } from "../domain/pontmore-agent";
+import { createCashuEscrowDescriptor, createCashuEscrowPlan } from "../domain/pontmore-escrow";
+import { createPontmoreTransitionDraft } from "../domain/pontmore-lifecycle";
+
+const FIXTURE_TIME = 1_788_853_200;
+const RELAYS = ["wss://relay.damus.io", "wss://nos.lol"] as const;
+
+export function createPactDemoFixtures() {
+  const requesterIdentity = createNostrIdentity("11".repeat(32), RELAYS);
+  const providerIdentity = createNostrIdentity("22".repeat(32), RELAYS);
+  const escrowDescriptor = createCashuEscrowDescriptor({
+    identity: providerIdentity,
+    identifier: "cashu-document-summary",
+    updatedAt: FIXTURE_TIME,
+    referenceFormat: "opaque_service_reference",
+  });
+  const requesterDefinition = createPontmoreAgentDefinition({
+    identity: requesterIdentity,
+    identifier: "agent",
+    name: "P001 Requester",
+    about: "Discovers and evaluates a bounded document-summary service.",
+    capabilities: {
+      names: ["service-discovery", "offer-evaluation", "task-verification"],
+      settlement_networks: ["cashu"],
+    },
+    pricingPolicyReference: "pactagent:P001-requester-policy:v1",
+    escrowDescriptorReference: escrowDescriptor.address,
+    updatedAt: FIXTURE_TIME,
+  });
+  const providerDefinition = createPontmoreAgentDefinition({
+    identity: providerIdentity,
+    identifier: "agent",
+    name: "P002 Provider",
+    about: "Provides the bounded document-summary service.",
+    capabilities: { names: ["document-summary"], settlement_networks: ["cashu"] },
+    pricingPolicyReference: "pactagent:P002-provider-policy:v1",
+    escrowDescriptorReference: escrowDescriptor.address,
+    updatedAt: FIXTURE_TIME,
+  });
+  const requester: RequesterAgent = {
+    id: "P001",
+    role: "requester",
+    identity: requesterIdentity,
+    definition: requesterDefinition,
+    policy: {
+      maxBudgetSats: btcToSats("0.00000500"),
+      allowedCapabilities: ["document-summary"],
+      maximumEscrowDurationSeconds: 15 * 60,
+      maximumProviderPriceSats: btcToSats("0.00000450"),
+      allowedSettlementNetworks: ["cashu"],
+      autoRelease: "deterministic_checks_only",
+    },
+  };
+  const provider: ProviderAgent = {
+    id: "P002",
+    role: "provider",
+    identity: providerIdentity,
+    definition: providerDefinition,
+    policy: {
+      minimumPriceSats: btcToSats("0.00000200"),
+      maximumDocumentBytes: 1_000_000,
+      supportedMediaTypes: ["text/plain", "application/pdf"],
+      maximumExecutionDurationSeconds: 5 * 60,
+      serviceCapabilities: ["document-summary"],
+    },
+  };
+  const offer: ServiceOffer = {
+    providerPublicKey: providerIdentity.publicKey,
+    capability: "document-summary",
+    priceSats: btcToSats("0.00000350"),
+    settlementNetwork: "cashu",
+    escrowDescriptorReference: escrowDescriptor.address,
+    estimatedExecutionSeconds: 120,
+  };
+  const escrowPlan = createCashuEscrowPlan({
+    descriptor: escrowDescriptor,
+    amountSats: offer.priceSats,
+    timeoutSeconds: requester.policy.maximumEscrowDurationSeconds,
+  });
+  const transitions = [
+    createPontmoreTransitionDraft({
+      identity: requesterIdentity,
+      swapId: "pact-demo-001",
+      previous: "requested",
+      next: "offer_accepted",
+      actorRole: "customer",
+      reason: "offer_within_policy",
+      createdAt: FIXTURE_TIME + 1,
+    }),
+    createPontmoreTransitionDraft({
+      identity: requesterIdentity,
+      swapId: "pact-demo-001",
+      previous: "offer_accepted",
+      next: "funding_intended",
+      actorRole: "customer",
+      reason: "cashu_escrow_selected",
+      createdAt: FIXTURE_TIME + 2,
+    }),
+  ] as const;
+
+  return { requester, provider, escrowDescriptor, escrowPlan, offer, transitions };
+}
