@@ -6,7 +6,7 @@ import {
   NostrEventValidationError,
   parseSignedNostrEvent,
   parseUnsignedNostrEvent,
-  serializeUnsignedNostrEvent,
+  serializeSignedNostrEvent,
   verifySignedNostrEvent,
 } from "../domain/nostr";
 import { createLocalNostrSigner, generateNostrPrivateKey } from "./nostr-signer";
@@ -114,9 +114,7 @@ describe("local Nostr signer", () => {
     const first = await signer.sign(unsigned);
     const second = await signer.sign(unsigned);
 
-    // The event id is a pure function of the event fields, so it is stable across calls.
     expect(second.id).toBe(first.id);
-    // BIP-340 permits a fresh nonce per signature, so sig may differ; both must verify.
     expect(() => verifySignedNostrEvent(first)).not.toThrow();
     expect(() => verifySignedNostrEvent(second)).not.toThrow();
   });
@@ -145,7 +143,7 @@ describe("local Nostr signer", () => {
     it("never places private-key material on signed event output", async () => {
       const signer = createLocalNostrSigner(P001_PRIVATE_KEY);
       const signed = await signer.sign(unsignedEvent(signer.publicKey));
-      const serialized = serializeUnsignedNostrEvent(signed);
+      const serialized = serializeSignedNostrEvent(signed);
 
       expect(serialized).not.toContain(P001_PRIVATE_KEY);
       expect(serialized).not.toContain("privateKey");
