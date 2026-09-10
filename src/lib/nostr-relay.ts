@@ -374,8 +374,9 @@ export class WebSocketNostrRelayAdapter implements NostrRelayAdapter {
     const socket = this.socket as RelayWebSocket;
     const timeoutMs = options?.timeoutMs ?? this.defaultTimeoutMs;
     const subscriptionId = `pactagent-${this.nextSubscriptionId++}`;
-    const maxEvents =
+    const requestedLimit =
       typeof filter.limit === "number" && filter.limit > 0 ? filter.limit : DEFAULT_MAX_QUERY_EVENTS;
+    const maxEvents = Math.min(requestedLimit, DEFAULT_MAX_QUERY_EVENTS);
 
     return new Promise<SignedNostrEvent[]>((resolve, reject) => {
       let settled = false;
@@ -392,7 +393,9 @@ export class WebSocketNostrRelayAdapter implements NostrRelayAdapter {
         if (reqSent && socket.readyState === WEBSOCKET_OPEN) {
           try {
             socket.send(JSON.stringify(["CLOSE", subscriptionId]));
-          } catch { }
+          } catch {
+            // Best-effort CLOSE during teardown; a failure here does not affect the settled result.
+          }
         }
         if (error) reject(error);
         else resolve(events);
@@ -460,9 +463,9 @@ export class WebSocketNostrRelayAdapter implements NostrRelayAdapter {
       }
       options?.signal?.addEventListener("abort", onAbort);
 
-      reqSent = true;
       try {
         socket.send(JSON.stringify(["REQ", subscriptionId, toWireFilter(filter)]));
+        reqSent = true;
       } catch (error) {
         finish(connectionFailedError(this.url, "querying", error));
       }
@@ -512,7 +515,9 @@ export class WebSocketNostrRelayAdapter implements NostrRelayAdapter {
     if (socket.readyState === WEBSOCKET_CLOSED) return;
     try {
       socket.close(1000, "client");
-    } catch { }
+    } catch {
+      // Best-effort shutdown during cleanup; the socket may already be closing or closed.
+    }
   }
 
   private waitForOpen(socket: RelayWebSocket, signal?: AbortSignal): Promise<void> {

@@ -515,7 +515,7 @@ describe("WebSocketNostrRelayAdapter - query", () => {
     expect(frames.some((f) => (f as unknown[])[0] === "CLOSE")).toBe(false);
   });
 
-  it("wraps a synchronous query send failure", async () => {
+  it("wraps a synchronous query send failure and does not send CLOSE for the unopened subscription", async () => {
     const ref: { current?: FakeRelaySocket } = {};
     const adapter = createAdapter(ref, { sendError: new Error("send failed") });
     await adapter.connect();
@@ -524,6 +524,8 @@ describe("WebSocketNostrRelayAdapter - query", () => {
       code: "connection_failed",
       cause: "send failed",
     });
+    const frames = ref.current?.sentFrames() ?? [];
+    expect(frames.some((f) => (f as unknown[])[0] === "CLOSE")).toBe(false);
   });
 
   it("bounds the result set to the filter limit and closes the subscription", async () => {
@@ -545,6 +547,29 @@ describe("WebSocketNostrRelayAdapter - query", () => {
     expect(result).toEqual([eventA, eventB]);
     const closeFrame = ref.current?.sentFrames().at(-1) as unknown[];
     expect(closeFrame[0]).toBe("CLOSE");
+  });
+
+  it("caps the local buffer to the hard maximum even when the relay ignores the wire limit", async () => {
+    const ref: { current?: FakeRelaySocket } = {};
+    const adapter = createAdapter(ref, { defaultTimeoutMs: 1000 });
+    await adapter.connect();
+
+    const query = adapter.queryEvents({ kinds: [1], limit: 1_000_000 });
+    const subscriptionId = (ref.current?.lastSentFrame() as unknown[])[1] as string;
+
+    // Relay ignores the requested limit and floods events; the adapter must cap locally.
+    const flood: SignedNostrEvent[] = [];
+    for (let i = 0; i < 11_000; i++) {
+      flood.push(signedEvent({ id: i.toString(16).padStart(64, "0") }));
+    }
+    for (const event of flood.slice(0, 10_001)) {
+      ref.current?.receive(["EVENT", subscriptionId, event]);
+    }
+    ref.current?.receive(["EOSE", subscriptionId]);
+
+    const result = await query;
+    expect(result.length).toBe(10_000);
+    ref.current?.dispose();
   });
 });
 
