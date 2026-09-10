@@ -1,4 +1,5 @@
 import { InvalidDomainInputError } from "./errors";
+import { verifyEvent } from "nostr-tools/pure";
 
 declare const nostrPublicKeyBrand: unique symbol;
 
@@ -30,6 +31,18 @@ export interface NostrSigner {
   sign(event: UnsignedNostrEvent): Promise<SignedNostrEvent>;
 }
 
+export type NostrEventValidationErrorCode = "invalid_nostr_event" | "invalid_signature";
+
+export class NostrEventValidationError extends InvalidDomainInputError {
+  readonly code: NostrEventValidationErrorCode;
+
+  constructor(code: NostrEventValidationErrorCode, message: string) {
+    super(message);
+    this.name = "NostrEventValidationError";
+    this.code = code;
+  }
+}
+
 export function nostrPublicKey(value: string): NostrPublicKey {
   if (!/^[0-9a-f]{64}$/.test(value)) {
     throw new InvalidDomainInputError("Nostr public key must be 64 lowercase hexadecimal characters");
@@ -51,6 +64,10 @@ export function createNostrIdentity(publicKey: string, relays: readonly string[]
 }
 
 export function serializeUnsignedNostrEvent(event: UnsignedNostrEvent): string {
+  return JSON.stringify(event);
+}
+
+export function serializeSignedNostrEvent(event: SignedNostrEvent): string {
   return JSON.stringify(event);
 }
 
@@ -96,4 +113,74 @@ export function parseUnsignedNostrEvent(value: string): UnsignedNostrEvent {
     tags,
     content: candidate.content,
   };
+}
+
+/** Validates the untrusted wire representation of a signed Nostr event. */
+export function parseSignedNostrEvent(value: unknown): SignedNostrEvent {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new NostrEventValidationError("invalid_nostr_event", "Signed Nostr event must be valid JSON");
+    }
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new NostrEventValidationError("invalid_nostr_event", "Signed Nostr event must be an object");
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  const allowedKeys = ["id", "pubkey", "created_at", "kind", "tags", "content", "sig"];
+  if (Object.keys(candidate).some((key) => !allowedKeys.includes(key))) {
+    throw new NostrEventValidationError(
+      "invalid_nostr_event",
+      "Signed Nostr event contains unsupported fields",
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(candidate.id))) {
+    throw new NostrEventValidationError("invalid_nostr_event", "Nostr event id must be 64 lowercase hexadecimal characters");
+  }
+  if (!/^[0-9a-f]{128}$/.test(String(candidate.sig))) {
+    throw new NostrEventValidationError("invalid_nostr_event", "Nostr event signature must be 128 lowercase hexadecimal characters");
+  }
+
+  let unsigned: UnsignedNostrEvent;
+  try {
+    unsigned = parseUnsignedNostrEvent(
+      JSON.stringify({
+        pubkey: candidate.pubkey,
+        created_at: candidate.created_at,
+        kind: candidate.kind,
+        tags: candidate.tags,
+        content: candidate.content,
+      }),
+    );
+  } catch {
+    throw new NostrEventValidationError("invalid_nostr_event", "Signed Nostr event fields are invalid");
+  }
+
+  return {
+    ...unsigned,
+    id: candidate.id as string,
+    sig: candidate.sig as string,
+  };
+}
+
+/** Verifies both the NIP-01 event id and its Schnorr signature. */
+export function verifySignedNostrEvent(event: SignedNostrEvent): void {
+  const wireEvent = {
+    id: event.id,
+    pubkey: event.pubkey,
+    created_at: event.created_at,
+    kind: event.kind,
+    tags: event.tags.map((tag) => [...tag]),
+    content: event.content,
+    sig: event.sig,
+  };
+  if (!verifyEvent(wireEvent)) {
+    throw new NostrEventValidationError(
+      "invalid_signature",
+      "Nostr event id or signature is invalid",
+    );
+  }
 }

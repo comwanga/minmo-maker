@@ -13,11 +13,11 @@ P001 Requester ---------------- P002 Provider
                        v
                 unsigned action
                        |
-                 signing boundary          NOT IMPLEMENTED
+                 NostrSigner port           #6 IMPLEMENTATION PENDING
                        |
               +--------+--------+
               |                 |
-            Nostr             Cashu         NOT CONNECTED
+        NostrRelayAdapter      Cashu         NOT CONNECTED
               |                 |
               +---- Pontmore ---+
                   public state
@@ -28,7 +28,7 @@ P001 Requester ---------------- P002 Provider
 The implementation follows the current draft PIPs from [`pontmore/protocol`](https://github.com/pontmore/protocol):
 
 - **PIP-00, kind 30360:** an addressable agent-definition event with `d`, `t=agent`, `relay`, and default-escrow `a` tags. PactAgent uses a documented v1 shape inside the PIP's open `capabilities` field; the detailed P001/P002 policies remain separate application data.
-- **PIP-01, kind 30361:** a public escrow compatibility descriptor. The Cashu fixture declares `escrow_type=cashu_escrow`, canonical `networks=[cashu]`, 1-of-1 funding, `pip03` dispute policy, and an opaque reference format. It contains no token, preimage, credential, or private payment payload.
+- **PIP-01, kind 30361:** a public escrow compatibility descriptor. The Cashu fixture declares `escrow_type=cashu_escrow`, canonical `networks=[cashu]`, 1-of-1 funding, `pip03` dispute policy with a recoverable refund-trigger timeout, and an opaque reference format. It contains no token, proof, preimage, credential, or private payment payload. Because draft PIP-01 requires an explicit timeout fallback but does not yet name its JSON fields, the nested `dispute_rules.timeout` shape is documented as a PactAgent v1 convention rather than a Pontmore standard.
 - **PIP-02, kinds 7300–7304 and 30362:** immutable request, transition, evidence, dispute, and note events plus replaceable snapshots. PIP-02 currently specifies transition fields and coherence but not state values; `DocumentSummaryLifecycleState` is therefore explicitly an application vocabulary carried by compliant transition drafts.
 - **PIP-03:** operator-governed dispute and timeout rules. PactAgent models the canonical refund-trigger timeout with a non-mutual fallback of cancelling and refunding. AI cannot create resolution modes.
 
@@ -48,7 +48,18 @@ Private data includes uploaded documents, raw prompts, complete provider results
 AI proposal -> deterministic policy -> isolated signer -> protocol action
 ```
 
-The current implementation stops after deterministic policy and unsigned event drafts. `NostrSigner` is an interface with no private-key implementation. The LLM has no signing or wallet authority.
+PIP-01 event construction stops at an unsigned draft and hands that draft to
+`NostrSigner`; the descriptor layer never accepts or retrieves a private key. A
+signed event is checked against the original draft and its NIP-01 id and Schnorr
+signature are verified before publication. Retrieval repeats signature and
+descriptor validation before returning domain data. `NostrSigner` still has no
+production private-key implementation on this branch, and the LLM has no signing
+or wallet authority.
+
+The PIP-01 workflow uses issue #4's `NostrRelayAdapter` and its typed
+`publish(event)` and `queryEvents(filter)` operations directly. Connection
+lifecycle and bounded WebSocket behavior belong to that adapter, not to the
+escrow domain.
 
 ## Local demo boundary
 

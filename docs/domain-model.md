@@ -10,7 +10,18 @@ The previous engineering phase established useful deterministic foundations. `Sa
 
 `PontmoreAgentDefinition` models a PIP-00 kind-30360 draft and validates its required tags and minimum versioned content. PIP-00 currently names content fields without fixing their nested value schemas, so PactAgent v1 documents `capabilities.names`, `capabilities.settlement_networks`, string policy references, and string escrow references as application conventions. P001/P002 identifiers and detailed policies remain separate PactAgent fields—not PIP numbers or additions to the protocol.
 
-`PontmoreEscrowDescriptor` models the current PIP-01 public compatibility object. Its strict parser rejects unsupported fields, which prevents token or secret fields from entering the public descriptor. `CashuEscrowPlan` separately records application funding/release/refund intent and a recoverable PIP-03 timeout; it has no execution method.
+`PontmoreEscrowDescriptor` models the current PIP-01 public compatibility object.
+Its strict allowlisted constructor and parser reject unsupported fields and named
+private settlement material. The public descriptor mirrors the existing
+recoverable PIP-03 refund-trigger timeout; the remaining `CashuEscrowPlan` fields
+are application funding/release/refund intent and have no execution method.
+
+`signCashuEscrowDescriptor` accepts the existing `NostrSigner` interface, confirms
+that the signer did not alter the draft, and verifies the resulting NIP-01
+signature. `retrieveCashuEscrowDescriptor` queries by kind, author, and `d` tag,
+selects the current addressable event, verifies it, and strictly parses it.
+`resolveAgentCashuEscrowDescriptor` follows the protocol-visible address stored in
+the PIP-00 content and `a` tag rather than relying on fixture identity.
 
 `PontmoreTransitionDraft` models the required PIP-02 transition content. `DocumentSummaryLifecycleState` is a deliberately narrow application-specific vocabulary because the current PIP-02 draft does not define canonical state values. Validation enforces allowed changes, one swap identifier, chronological append-only events, and `prev_state` coherence.
 
