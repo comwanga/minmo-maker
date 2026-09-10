@@ -5,24 +5,52 @@ import type { Sats } from "./money";
 import { sats } from "./money";
 
 export const PIP01_ESCROW_DESCRIPTOR_KIND = 30361;
+export const PACTAGENT_CASHU_REFERENCE_FORMAT = "opaque_service_reference";
+
+export type PontmoreEscrowDescriptorErrorCode =
+  | "invalid_descriptor"
+  | "forbidden_public_field"
+  | "unsupported_escrow_type"
+  | "unsupported_network"
+  | "missing_required_metadata"
+  | "malformed_descriptor_reference";
+
+export class PontmoreEscrowDescriptorError extends InvalidDomainInputError {
+  readonly code: PontmoreEscrowDescriptorErrorCode;
+
+  constructor(code: PontmoreEscrowDescriptorErrorCode, message: string) {
+    super(message);
+    this.name = "PontmoreEscrowDescriptorError";
+    this.code = code;
+  }
+}
+
+export interface PontmoreEscrowTimeoutPolicy {
+  readonly class: "refund-trigger timeout";
+  readonly duration_seconds: number;
+  readonly fallback_resolution: "cancelling and refunding";
+}
 
 export interface PontmoreEscrowDescriptorContent {
   readonly version: 1;
   readonly escrow_type: "cashu_escrow";
-  readonly networks: readonly ["cashu", ...string[]];
+  readonly networks: readonly ["cashu"];
   readonly funding_rules: Readonly<{
     funding_threshold: number;
     participant_count: number;
   }>;
-  readonly dispute_rules: Readonly<{ policy: "pip03" }>;
-  readonly reference_format: string;
+  readonly dispute_rules: Readonly<{
+    policy: "pip03";
+    timeout: PontmoreEscrowTimeoutPolicy;
+  }>;
+  readonly reference_format: typeof PACTAGENT_CASHU_REFERENCE_FORMAT;
   readonly updated_at: number;
 }
 
-export interface PontmoreEscrowDescriptor {
+export interface PontmoreEscrowDescriptor<TEvent extends UnsignedNostrEvent = UnsignedNostrEvent> {
   readonly identifier: string;
   readonly address: string;
-  readonly event: UnsignedNostrEvent;
+  readonly event: TEvent;
   readonly content: PontmoreEscrowDescriptorContent;
 }
 
@@ -51,7 +79,7 @@ export type CashuSettlementState =
   | "released"
   | "refunded";
 
-/** Application escrow intent; none of these fields are added to the public PIP-01 descriptor. */
+/** Application escrow intent; only its timeout semantics are mirrored into public PIP-01 metadata. */
 export interface CashuEscrowPlan {
   readonly descriptorReference: string;
   readonly amountSats: Sats;
@@ -72,38 +100,142 @@ export interface CashuEscrowPlan {
   }>;
 }
 
-interface CreateCashuDescriptorInput {
+export interface CreateCashuDescriptorInput {
   readonly identity: NostrIdentity;
   readonly identifier: string;
   readonly updatedAt: number;
   readonly referenceFormat: string;
   readonly fundingThreshold?: number;
   readonly participantCount?: number;
+  readonly timeoutSeconds?: number;
+}
+
+export interface PontmoreEscrowDescriptorReference {
+  readonly kind: typeof PIP01_ESCROW_DESCRIPTOR_KIND;
+  readonly publicKey: NostrIdentity["publicKey"];
+  readonly identifier: string;
+}
+
+const CREATE_INPUT_KEYS = [
+  "identity",
+  "identifier",
+  "updatedAt",
+  "referenceFormat",
+  "fundingThreshold",
+  "participantCount",
+  "timeoutSeconds",
+] as const;
+const FORBIDDEN_FIELD_NAMES = new Set([
+  "token",
+  "tokens",
+  "cashutoken",
+  "rawcashutoken",
+  "proof",
+  "proofs",
+  "mintcredential",
+  "mintcredentials",
+  "apicredential",
+  "apicredentials",
+  "apikey",
+  "privatekey",
+  "nostrsecretkey",
+  "secretkey",
+  "nsec",
+  "preimage",
+  "preimages",
+  "payoutinstruction",
+  "payoutinstructions",
+  "privateroutinginformation",
+  "privateroutingstate",
+  "internalcustodyidentifier",
+  "custodybackendidentifier",
+  "privatesettlementmetadata",
+  "settlementsecret",
+  "settlementsecrets",
+  "privatenote",
+  "privatenotes",
+  "walletidentifier",
+  "internalaccountdetails",
+]);
+
+function normalizedFieldName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function assertNoForbiddenPublicMaterial(value: unknown): void {
+  if (typeof value === "string") {
+    if (/nsec1[023456789acdefghjklmnpqrstuvwxyz]+/i.test(value) || /cashu[ab][a-z0-9_-]+/i.test(value)) {
+      throw new PontmoreEscrowDescriptorError(
+        "forbidden_public_field",
+        "PIP-01 public descriptor contains forbidden secret or token material",
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(assertNoForbiddenPublicMaterial);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, nested] of Object.entries(value)) {
+    if (FORBIDDEN_FIELD_NAMES.has(normalizedFieldName(key))) {
+      throw new PontmoreEscrowDescriptorError(
+        "forbidden_public_field",
+        "PIP-01 public descriptor contains a forbidden private field",
+      );
+    }
+    assertNoForbiddenPublicMaterial(nested);
+  }
+}
+
+function descriptorError(code: PontmoreEscrowDescriptorErrorCode, message: string): never {
+  throw new PontmoreEscrowDescriptorError(code, message);
 }
 
 function requirePositiveInteger(value: number, field: string): void {
   if (!Number.isInteger(value) || value < 1) {
-    throw new InvalidDomainInputError(`${field} must be a positive integer`);
+    descriptorError("invalid_descriptor", `${field} must be a positive integer`);
   }
+}
+
+function requireIdentifier(value: string): string {
+  const identifier = value.trim();
+  if (/^[0-9a-f]{64}$/i.test(identifier)) {
+    descriptorError(
+      "forbidden_public_field",
+      "PIP-01 public identifier must not contain secret-key-shaped material",
+    );
+  }
+  if (!identifier || identifier !== value || /[\u0000-\u001f\u007f]/.test(identifier)) {
+    descriptorError("missing_required_metadata", "PIP-01 d tag must be a stable non-empty identifier");
+  }
+  assertNoForbiddenPublicMaterial(identifier);
+  return identifier;
 }
 
 export function createCashuEscrowDescriptor(
   input: CreateCashuDescriptorInput,
 ): PontmoreEscrowDescriptor {
-  const identifier = input.identifier.trim();
+  assertNoForbiddenPublicMaterial(input);
+  if (Object.keys(input).some((key) => !CREATE_INPUT_KEYS.includes(key as (typeof CREATE_INPUT_KEYS)[number]))) {
+    descriptorError("invalid_descriptor", "Cashu descriptor input contains unsupported fields");
+  }
+  const identifier = requireIdentifier(input.identifier);
   const referenceFormat = input.referenceFormat.trim();
   const fundingThreshold = input.fundingThreshold ?? 1;
   const participantCount = input.participantCount ?? 1;
-  if (!identifier || !referenceFormat) {
-    throw new InvalidDomainInputError("Cashu descriptor identifier and reference format are required");
+  const timeoutSeconds = input.timeoutSeconds ?? 15 * 60;
+  if (referenceFormat !== PACTAGENT_CASHU_REFERENCE_FORMAT) {
+    descriptorError("invalid_descriptor", "Cashu descriptor reference format is unsupported");
   }
   if (!Number.isInteger(input.updatedAt) || input.updatedAt < 0) {
-    throw new InvalidDomainInputError("PIP-01 updated_at must be a non-negative integer");
+    descriptorError("invalid_descriptor", "PIP-01 updated_at must be a non-negative integer");
   }
   requirePositiveInteger(fundingThreshold, "Funding threshold");
   requirePositiveInteger(participantCount, "Participant count");
+  requirePositiveInteger(timeoutSeconds, "Timeout duration");
   if (participantCount < fundingThreshold) {
-    throw new InvalidDomainInputError("Participant count must be at least the funding threshold");
+    descriptorError("invalid_descriptor", "Participant count must be at least the funding threshold");
   }
 
   const content: PontmoreEscrowDescriptorContent = {
@@ -111,8 +243,15 @@ export function createCashuEscrowDescriptor(
     escrow_type: "cashu_escrow",
     networks: ["cashu"],
     funding_rules: { funding_threshold: fundingThreshold, participant_count: participantCount },
-    dispute_rules: { policy: "pip03" },
-    reference_format: referenceFormat,
+    dispute_rules: {
+      policy: "pip03",
+      timeout: {
+        class: "refund-trigger timeout",
+        duration_seconds: timeoutSeconds,
+        fallback_resolution: "cancelling and refunding",
+      },
+    },
+    reference_format: PACTAGENT_CASHU_REFERENCE_FORMAT,
     updated_at: input.updatedAt,
   };
   const event: UnsignedNostrEvent = {
@@ -132,21 +271,43 @@ export function createCashuEscrowDescriptor(
 
 export function parseCashuEscrowDescriptor(serialized: string): PontmoreEscrowDescriptor {
   const event = parseUnsignedNostrEvent(serialized);
+  return parseCashuEscrowDescriptorEvent(event);
+}
+
+export function parseCashuEscrowDescriptorEvent<TEvent extends UnsignedNostrEvent>(
+  event: TEvent,
+): PontmoreEscrowDescriptor<TEvent> {
   if (event.kind !== PIP01_ESCROW_DESCRIPTOR_KIND) {
-    throw new InvalidDomainInputError("PIP-01 escrow descriptor must use kind 30361");
+    descriptorError("invalid_descriptor", "PIP-01 escrow descriptor must use kind 30361");
   }
-  const identifier = event.tags.find((tag) => tag[0] === "d")?.[1];
-  if (!identifier) throw new InvalidDomainInputError("PIP-01 escrow descriptor requires a d tag");
+  assertNoForbiddenPublicMaterial(event.tags);
+  for (const tag of event.tags) {
+    if (FORBIDDEN_FIELD_NAMES.has(normalizedFieldName(tag[0]))) {
+      descriptorError(
+        "forbidden_public_field",
+        "PIP-01 public descriptor contains a forbidden private tag",
+      );
+    }
+    if (!["d", "network"].includes(tag[0]) || tag.length !== 2) {
+      descriptorError("invalid_descriptor", "PIP-01 descriptor contains unsupported tags");
+    }
+  }
+  const identifierTags = event.tags.filter((tag) => tag[0] === "d");
+  if (identifierTags.length !== 1 || !identifierTags[0][1]) {
+    descriptorError("missing_required_metadata", "PIP-01 escrow descriptor requires exactly one d tag");
+  }
+  const identifier = requireIdentifier(identifierTags[0][1]);
 
   let content: unknown;
   try {
     content = JSON.parse(event.content);
   } catch {
-    throw new InvalidDomainInputError("PIP-01 content must be valid JSON");
+    descriptorError("invalid_descriptor", "PIP-01 content must be valid JSON");
   }
   if (typeof content !== "object" || content === null) {
-    throw new InvalidDomainInputError("PIP-01 content must be an object");
+    descriptorError("invalid_descriptor", "PIP-01 content must be an object");
   }
+  assertNoForbiddenPublicMaterial(content);
   const candidate = content as Record<string, unknown>;
   const keys = Object.keys(candidate);
   const allowedKeys = [
@@ -159,23 +320,32 @@ export function parseCashuEscrowDescriptor(serialized: string): PontmoreEscrowDe
     "updated_at",
   ];
   if (keys.some((key) => !allowedKeys.includes(key))) {
-    throw new InvalidDomainInputError("PIP-01 descriptor contains unsupported or private fields");
+    descriptorError("invalid_descriptor", "PIP-01 descriptor contains unsupported fields");
+  }
+  if (allowedKeys.some((key) => !(key in candidate))) {
+    descriptorError("missing_required_metadata", "PIP-01 descriptor is missing required metadata");
   }
   const funding = candidate.funding_rules as Record<string, unknown> | undefined;
   const dispute = candidate.dispute_rules as Record<string, unknown> | undefined;
+  const timeout = dispute?.timeout as Record<string, unknown> | undefined;
   const networkTags = event.tags.filter((tag) => tag[0] === "network").map((tag) => tag[1]);
+  if (candidate.escrow_type !== "cashu_escrow") {
+    descriptorError("unsupported_escrow_type", "PIP-01 escrow type is unsupported");
+  }
   if (
-    candidate.version !== 1 ||
-    candidate.escrow_type !== "cashu_escrow" ||
     !Array.isArray(candidate.networks) ||
     candidate.networks.length !== 1 ||
-    !candidate.networks.includes("cashu") ||
-    candidate.networks.some((network) => typeof network !== "string" || network !== network.toLowerCase()) ||
+    candidate.networks[0] !== "cashu" ||
     networkTags.length !== 1 ||
-    networkTags[0] !== "cashu" ||
-    typeof candidate.reference_format !== "string" ||
-    !candidate.reference_format.trim() ||
+    networkTags[0] !== "cashu"
+  ) {
+    descriptorError("unsupported_network", "PIP-01 Cashu descriptor requires the cashu network");
+  }
+  if (
+    candidate.version !== 1 ||
+    candidate.reference_format !== PACTAGENT_CASHU_REFERENCE_FORMAT ||
     !Number.isInteger(candidate.updated_at) ||
+    candidate.updated_at !== event.created_at ||
     typeof funding !== "object" ||
     funding === null ||
     Object.keys(funding).some((key) => !["funding_threshold", "participant_count"].includes(key)) ||
@@ -185,10 +355,17 @@ export function parseCashuEscrowDescriptor(serialized: string): PontmoreEscrowDe
     (funding.participant_count as number) < (funding.funding_threshold as number) ||
     typeof dispute !== "object" ||
     dispute === null ||
-    Object.keys(dispute).some((key) => key !== "policy") ||
-    dispute.policy !== "pip03"
+    Object.keys(dispute).some((key) => !["policy", "timeout"].includes(key)) ||
+    dispute.policy !== "pip03" ||
+    typeof timeout !== "object" ||
+    timeout === null ||
+    Object.keys(timeout).some((key) => !["class", "duration_seconds", "fallback_resolution"].includes(key)) ||
+    timeout.class !== "refund-trigger timeout" ||
+    !Number.isInteger(timeout.duration_seconds) ||
+    (timeout.duration_seconds as number) < 1 ||
+    timeout.fallback_resolution !== "cancelling and refunding"
   ) {
-    throw new InvalidDomainInputError("PIP-01 Cashu descriptor is incompatible");
+    descriptorError("missing_required_metadata", "PIP-01 Cashu descriptor metadata is missing or invalid");
   }
 
   const typedContent: PontmoreEscrowDescriptorContent = {
@@ -199,8 +376,15 @@ export function parseCashuEscrowDescriptor(serialized: string): PontmoreEscrowDe
       funding_threshold: funding.funding_threshold as number,
       participant_count: funding.participant_count as number,
     },
-    dispute_rules: { policy: "pip03" },
-    reference_format: candidate.reference_format,
+    dispute_rules: {
+      policy: "pip03",
+      timeout: {
+        class: "refund-trigger timeout",
+        duration_seconds: timeout.duration_seconds as number,
+        fallback_resolution: "cancelling and refunding",
+      },
+    },
+    reference_format: PACTAGENT_CASHU_REFERENCE_FORMAT,
     updated_at: candidate.updated_at as number,
   };
   return {
@@ -211,11 +395,28 @@ export function parseCashuEscrowDescriptor(serialized: string): PontmoreEscrowDe
   };
 }
 
+export function parsePontmoreEscrowDescriptorReference(
+  reference: string,
+): PontmoreEscrowDescriptorReference {
+  const match = /^30361:([0-9a-f]{64}):(.+)$/.exec(reference);
+  if (!match) {
+    descriptorError("malformed_descriptor_reference", "PIP-01 descriptor reference is malformed");
+  }
+  return {
+    kind: PIP01_ESCROW_DESCRIPTOR_KIND,
+    publicKey: match[1] as NostrIdentity["publicKey"],
+    identifier: requireIdentifier(match[2]),
+  };
+}
+
 export function isCashuEscrowCompatible(descriptor: PontmoreEscrowDescriptor): boolean {
   return (
     descriptor.content.escrow_type === "cashu_escrow" &&
     descriptor.content.networks.includes("cashu") &&
     descriptor.content.dispute_rules.policy === "pip03" &&
+    descriptor.content.dispute_rules.timeout.class === "refund-trigger timeout" &&
+    descriptor.content.dispute_rules.timeout.duration_seconds >= 1 &&
+    descriptor.content.dispute_rules.timeout.fallback_resolution === "cancelling and refunding" &&
     descriptor.content.funding_rules.funding_threshold >= 1 &&
     descriptor.content.funding_rules.participant_count >=
       descriptor.content.funding_rules.funding_threshold
@@ -234,6 +435,9 @@ export function createCashuEscrowPlan(input: {
   if (input.amountSats === 0n) throw new InvalidDomainInputError("Escrow amount must be positive");
   if (!Number.isInteger(input.timeoutSeconds) || input.timeoutSeconds < 1) {
     throw new InvalidDomainInputError("Escrow timeout must be a positive integer");
+  }
+  if (input.timeoutSeconds !== input.descriptor.content.dispute_rules.timeout.duration_seconds) {
+    throw new InvalidDomainInputError("Escrow plan timeout must match its public descriptor");
   }
   return {
     descriptorReference: input.descriptor.address,
