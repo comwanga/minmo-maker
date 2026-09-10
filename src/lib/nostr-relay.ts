@@ -143,7 +143,7 @@ function assertRelayUrl(url: string): void {
 
 function containsPrivateKey(event: object): boolean {
   const candidate = event as Record<string, unknown>;
-  if (PRIVATE_KEY_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(candidate, field))) {
+  if (PRIVATE_KEY_FIELDS.some((field) => field in candidate)) {
     return true;
   }
   if (typeof candidate.content === "string" && candidate.content.includes(NSEC_PREFIX)) {
