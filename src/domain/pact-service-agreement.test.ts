@@ -871,6 +871,77 @@ describe("PactAgent service agreement kernel", () => {
     );
   });
 
+  it("rejects a first transition that predates the agreement root", () => {
+    const fixture = createFixture();
+    expect(() =>
+      createPactAgreementTransition({
+        context: fixture.context,
+        history: [],
+        nextState: "accepted",
+        actor: fixture.providerIdentity.publicKey,
+        actorRole: "provider",
+        createdAt: ROOT_TIME - 1,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "stale_predecessor" }));
+
+    const valid = createPactAgreementTransition({
+      context: fixture.context,
+      history: [],
+      nextState: "accepted",
+      actor: fixture.providerIdentity.publicKey,
+      actorRole: "provider",
+      createdAt: ROOT_TIME + 1,
+    });
+    const backdated = sign(
+      { ...valid.event, created_at: ROOT_TIME - 1 },
+      fixture.providerKey,
+    );
+    expect(() => reconstructPactAgreementHistory(fixture.context, [backdated])).toThrowError(
+      expect.objectContaining({ code: "stale_predecessor" }),
+    );
+  });
+
+  it("rejects a transition that predates its immediate predecessor", () => {
+    const fixture = createFixture();
+    const history: SignedNostrEvent[] = [];
+    const accepted = appendTransition(
+      fixture,
+      history,
+      "accepted",
+      "provider",
+      fixture.providerKey,
+      { createdAt: ROOT_TIME + 2 },
+    );
+    expect(() =>
+      createPactAgreementTransition({
+        context: fixture.context,
+        history,
+        predecessorEventId: accepted.id,
+        nextState: "escrow_funded",
+        actor: fixture.escrowIdentity.publicKey,
+        actorRole: "escrow",
+        createdAt: ROOT_TIME + 1,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "stale_predecessor" }));
+
+    const valid = createPactAgreementTransition({
+      context: fixture.context,
+      history,
+      predecessorEventId: accepted.id,
+      nextState: "escrow_funded",
+      actor: fixture.escrowIdentity.publicKey,
+      actorRole: "escrow",
+      createdAt: ROOT_TIME + 3,
+    });
+    const backdated = sign(
+      { ...valid.event, created_at: ROOT_TIME + 1 },
+      fixture.escrowKey,
+    );
+    expect(() =>
+      reconstructPactAgreementHistory(fixture.context, [accepted, backdated]),
+    ).toThrowError(expect.objectContaining({ code: "stale_predecessor" }));
+  });
+
   it("rejects advancement after terminal states", () => {
     const fixture = createFixture();
     const history: SignedNostrEvent[] = [];

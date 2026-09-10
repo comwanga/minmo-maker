@@ -1304,6 +1304,13 @@ export function reconstructPactAgreementHistory(
     if (selected.content.prev_state !== currentState || visited.has(selected.event.id)) {
       agreementError("stale_predecessor", "PactAgent transition predecessor state is incoherent");
     }
+    const predecessorCreatedAt =
+      predecessorKey === rootKey
+        ? context.root.event.created_at
+        : byId.get(predecessorKey)!.event.created_at;
+    if (selected.event.created_at < predecessorCreatedAt) {
+      agreementError("stale_predecessor", "PactAgent transition predates its predecessor");
+    }
     ordered.push(selected);
     visited.add(selected.event.id);
     currentState = selected.content.state;
@@ -1424,6 +1431,11 @@ export function createPactAgreementTransition(
   const predecessor = input.predecessorEventId ?? null;
   if (predecessor !== expectedPredecessor) {
     agreementError("stale_predecessor", "PactAgent transition does not reference the current tip");
+  }
+  const predecessorCreatedAt =
+    history.transitions.at(-1)?.event.created_at ?? context.root.event.created_at;
+  if (input.createdAt < predecessorCreatedAt) {
+    agreementError("stale_predecessor", "PactAgent transition predates its predecessor");
   }
   const actor = nostrPublicKey(input.actor);
   const completionDecision =
