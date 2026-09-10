@@ -464,7 +464,8 @@ export class WebSocketNostrRelayAdapter implements NostrRelayAdapter {
       options?.signal?.addEventListener("abort", onAbort);
 
       try {
-        socket.send(JSON.stringify(["REQ", subscriptionId, toWireFilter(filter)]));
+        const wireFilter = toWireFilter({ ...filter, limit: maxEvents });
+        socket.send(JSON.stringify(["REQ", subscriptionId, wireFilter]));
         reqSent = true;
       } catch (error) {
         finish(connectionFailedError(this.url, "querying", error));
