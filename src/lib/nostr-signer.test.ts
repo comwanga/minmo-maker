@@ -59,8 +59,24 @@ describe("local Nostr signer", () => {
     expect(signed.pubkey).toBe(unsigned.pubkey);
     expect(signed.created_at).toBe(unsigned.created_at);
     expect(signed.kind).toBe(unsigned.kind);
-    expect(signed.tags).toBe(unsigned.tags);
+    expect(signed.tags).toEqual(unsigned.tags);
+    expect(signed.tags).not.toBe(unsigned.tags);
     expect(signed.content).toBe(unsigned.content);
+  });
+
+  it("does not alias mutable input tags into the signed event", async () => {
+    const signer = createLocalNostrSigner(P001_PRIVATE_KEY);
+    const mutableTags: [string, string][] = [["p", "ab".repeat(32)]];
+    const unsigned = unsignedEvent(signer.publicKey, {
+      tags: mutableTags,
+    });
+
+    const signed = await signer.sign(unsigned);
+
+    mutableTags[0][1] = "cd".repeat(32);
+
+    expect(signed.tags[0][1]).toBe("ab".repeat(32));
+    expect(() => verifySignedNostrEvent(signed)).not.toThrow();
   });
 
   it("produces a signature that verifies via the domain verifier", async () => {

@@ -3,6 +3,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure
 import { InvalidDomainInputError } from "../domain/errors";
 import {
   type NostrSigner,
+  type NostrTag,
   type SignedNostrEvent,
   type UnsignedNostrEvent,
   nostrPublicKey,
@@ -89,7 +90,7 @@ export function createLocalNostrSigner(privateKeyHex: string): NostrSigner {
         pubkey: nostrPublicKey(signed.pubkey),
         created_at: signed.created_at,
         kind: signed.kind,
-        tags: event.tags,
+        tags: signed.tags.map((tag): NostrTag => [tag[0], ...tag.slice(1)]),
         content: signed.content,
         id: signed.id,
         sig: signed.sig,
