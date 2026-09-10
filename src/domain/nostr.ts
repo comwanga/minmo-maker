@@ -28,6 +28,8 @@ export interface SignedNostrEvent extends UnsignedNostrEvent {
 
 /** Signing is an execution boundary; callers submit unsigned data, never key material. */
 export interface NostrSigner {
+  /** The signer's public identity. Exposed without ever surfacing the private key. */
+  readonly publicKey: NostrPublicKey;
   sign(event: UnsignedNostrEvent): Promise<SignedNostrEvent>;
 }
 
