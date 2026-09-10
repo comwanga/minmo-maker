@@ -1,18 +1,12 @@
 import type { NostrTag, SignedNostrEvent } from "../domain/nostr";
 
 /*
- * Nostr relay transport adapter.
+  Nostr relay transport adapter.
  
   This boundary knows about NIP-01 relay framing and Nostr events only. It has
   no knowledge of P001/P002 policy, agent selection, escrow, or signing. The
   adapter never accepts, stores, or transmits private key material: it only
   relays already-signed {@link SignedNostrEvent} objects supplied by a caller.
- */
-
-/*
-  NIP-01 subscription filter. Tag filters are supplied via {@link tags}
-  (keyed by tag name without the leading `#`) and flattened to `#<tag>` keys
-  on the wire so the relay sees a standard filter object.
  */
 export interface NostrFilter {
   readonly ids?: readonly string[];
@@ -78,7 +72,7 @@ export class NostrRelayError extends Error {
 export type RelayWebSocketEvent = "open" | "message" | "close" | "error";
 export type RelayWebSocketListener = (event: unknown) => void;
 
-// Minimal slice of the WebSocket surface the adapter depends on. */
+// Minimal slice of the WebSocket surface the adapter depends on.  
 export interface RelayWebSocket {
   readonly readyState: number;
   readonly url: string;
@@ -190,7 +184,7 @@ function toSignedEvent(value: unknown): SignedNostrEvent | undefined {
   return event as unknown as SignedNostrEvent;
 }
 
-/**
+/*
   Reduce a raw WebSocket error event to a safe string message so transport
   internals (HTTP status, headers, request URLs) are not forwarded via `cause`
   into logged error objects.
@@ -496,7 +490,9 @@ export class WebSocketNostrRelayAdapter implements NostrRelayAdapter {
       try {
         socket.close(1000, "client_disconnect");
       } catch (error) {
-        done();
+        resolved = true;
+        clearTimeout(timer);
+        socket.removeEventListener("close", onClose);
         reject(connectionFailedError(this.url, "disconnecting", error));
       }
     });

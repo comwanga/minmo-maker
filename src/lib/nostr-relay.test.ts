@@ -572,4 +572,14 @@ describe("WebSocketNostrRelayAdapter - disconnect", () => {
     await expect(adapter.publish(signedEvent())).rejects.toMatchObject({ code: "not_connected" });
     await expect(adapter.queryEvents({ kinds: [1] })).rejects.toMatchObject({ code: "not_connected" });
   });
+
+  it("rejects with connection_failed when socket.close() throws", async () => {
+    const ref: { current?: FakeRelaySocket } = {};
+    const adapter = createAdapter(ref, { closeError: new Error("close failed") });
+    await adapter.connect();
+    await expect(adapter.disconnect()).rejects.toMatchObject({
+      code: "connection_failed",
+      cause: "close failed",
+    });
+  });
 });
