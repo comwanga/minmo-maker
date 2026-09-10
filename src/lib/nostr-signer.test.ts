@@ -190,5 +190,19 @@ describe("local Nostr signer", () => {
     it("rejects the wrong length", () => {
       expect(() => createLocalNostrSigner("11".repeat(31))).toThrow(InvalidDomainInputError);
     });
+
+    it("rejects the zero scalar", () => {
+      expect(() => createLocalNostrSigner("00".repeat(32))).toThrow(InvalidDomainInputError);
+    });
+
+    it("rejects a scalar equal to the secp256k1 group order", () => {
+      const groupOrder = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141";
+      expect(() => createLocalNostrSigner(groupOrder)).toThrow(InvalidDomainInputError);
+    });
+
+    it("rejects a scalar greater than the secp256k1 group order", () => {
+      const aboveOrder = "ffffffffffffffffffffffffffffffffbaaedce6af48a03bbfd25e8cd0364141";
+      expect(() => createLocalNostrSigner(aboveOrder)).toThrow(InvalidDomainInputError);
+    });
   });
 });

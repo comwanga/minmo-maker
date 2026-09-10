@@ -1,4 +1,4 @@
-import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 
 import { InvalidDomainInputError } from "../domain/errors";
 import {
@@ -9,6 +9,11 @@ import {
 } from "../domain/nostr";
 
 const PRIVATE_KEY_PATTERN = /^[0-9a-f]{64}$/;
+
+// secp256k1 group order n: valid secret scalars are in [1, n-1].
+const SECP256K1_ORDER = hexToBytes(
+  "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+);
 
 type NostrPrivateKey = string & { readonly __nostrPrivateKey: "NostrPrivateKey" };
 
@@ -26,23 +31,39 @@ function bytesToHex(bytes: Uint8Array): string {
   return hex;
 }
 
+function isZero(bytes: Uint8Array): boolean {
+  return bytes.every((b) => b === 0);
+}
+
+function isLessThan(a: Uint8Array, b: Uint8Array): boolean {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i];
+  }
+  return false;
+}
+
 function parseNostrPrivateKey(value: string): NostrPrivateKey {
   if (typeof value !== "string" || !PRIVATE_KEY_PATTERN.test(value)) {
     throw new InvalidDomainInputError("Nostr private key must be 64 lowercase hexadecimal characters");
+  }
+  const scalar = hexToBytes(value);
+  if (isZero(scalar) || !isLessThan(scalar, SECP256K1_ORDER)) {
+    throw new InvalidDomainInputError("Nostr private key must be a valid secp256k1 secret scalar");
   }
   return value as NostrPrivateKey;
 }
 
 // For local development identities only; keep it out of logs and public models.
 export function generateNostrPrivateKey(): string {
-  return bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+  return bytesToHex(generateSecretKey());
 }
 
 /*
  * Holds a private key only inside the returned closure; it is never attached as a
  * property, returned from any method, or placed onto signed event output, so no
- * caller — AI or otherwise — can reach it. Signing is a pure function of the event
- * and the held key, reusing the domain's nostr-tools crypto stack.
+ * caller — AI or otherwise — can reach it. Signing is performed locally using the
+ * supplied event and held key, with no model or network dependency, reusing the
+ * domain's nostr-tools crypto stack.
  */
 export function createLocalNostrSigner(privateKeyHex: string): NostrSigner {
   const privateKey = parseNostrPrivateKey(privateKeyHex);
