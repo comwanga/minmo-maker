@@ -23,7 +23,30 @@ selects the current addressable event, verifies it, and strictly parses it.
 `resolveAgentCashuEscrowDescriptor` follows the protocol-visible address stored in
 the PIP-00 content and `a` tag rather than relying on fixture identity.
 
-`PontmoreTransitionDraft` models the required PIP-02 transition content. `DocumentSummaryLifecycleState` is a deliberately narrow application-specific vocabulary because the current PIP-02 draft does not define canonical state values. Validation enforces allowed changes, one swap identifier, chronological append-only events, and `prev_state` coherence.
+`PontmoreSwapRequestContent` and the canonical PIP-02 event-kind registry remain
+as swap-specific declarations. The repository does not attach document-summary
+states or transition semantics to PIP-02.
+
+`PactServiceAgreementRoot` is the immutable requester proposal. It binds the two
+signed PIP-00 definitions, compatible signed PIP-01 descriptor, exact
+`document-summary@1` profile, Cashu price, execution bound, expiry, and versioned
+private-terms commitment. `PactAgreementTransition` records the root ID, immediate
+predecessor ID, previous/current states, signer pubkey, declared role, and only
+the safe reason/result reference allowed for that transition.
+
+`PactCompletionDecision` is a secret-free, locally validated binding between the
+exact result-submission event and the profile-derived result reference. It is
+required before `result_verified`, so a requester signature alone cannot unlock
+`release_authorized`. `PactEscrowAuthorityBinding` is similarly created only from
+a valid descriptor-owner-signed application record tied to the selected escrow
+configuration and agreement root.
+
+`reconstructPactAgreementHistory` verifies signatures and authorization, removes
+exact duplicates, follows predecessor IDs regardless of relay order, and returns
+an explicit `forked` result for competing children. It never chooses a branch by
+timestamp. The capability registry contains exactly one implementation,
+`document-summary@1`; unsupported versions fail before signing or economic state
+advancement.
 
 ## Application roles
 

@@ -27,6 +27,18 @@ describe("PIP-00 PactAgent definitions", () => {
     expect(parseUnsignedNostrEvent(serialized)).not.toHaveProperty("privateKey");
   });
 
+  it("preserves valid recommended PIP-00 tags", () => {
+    const { provider } = createPactDemoFixtures();
+    const event = {
+      ...provider.definition.event,
+      tags: [...provider.definition.event.tags, ["f", "KES"] as const],
+    };
+    expect(parsePontmoreAgentDefinition(JSON.stringify(event)).event.tags).toContainEqual([
+      "f",
+      "KES",
+    ]);
+  });
+
   it("rejects private key material and malformed Nostr identities", () => {
     expect(() => createNostrIdentity("not-a-key", ["wss://relay.example"])).toThrow(
       InvalidDomainInputError,
@@ -40,5 +52,22 @@ describe("PIP-00 PactAgent definitions", () => {
     const { provider } = createPactDemoFixtures();
     const event = { ...provider.definition.event, tags: provider.definition.event.tags.filter((tag) => tag[0] !== "a") };
     expect(() => parsePontmoreAgentDefinition(JSON.stringify(event))).toThrow(InvalidDomainInputError);
+  });
+
+  it("rejects duplicate singleton PIP-00 discovery tags", () => {
+    const { provider } = createPactDemoFixtures();
+    for (const duplicate of [
+      ["d", "ambiguous"],
+      ["t", "agent"],
+      ["a", provider.definition.content.escrow],
+    ] as const) {
+      const event = {
+        ...provider.definition.event,
+        tags: [...provider.definition.event.tags, duplicate],
+      };
+      expect(() => parsePontmoreAgentDefinition(JSON.stringify(event))).toThrow(
+        InvalidDomainInputError,
+      );
+    }
   });
 });

@@ -1,11 +1,10 @@
 import {
-  NostrEventValidationError,
+  assertSignedNostrEventMatchesDraft,
   parseSignedNostrEvent,
   serializeUnsignedNostrEvent,
   verifySignedNostrEvent,
   type NostrSigner,
   type SignedNostrEvent,
-  type UnsignedNostrEvent,
 } from "../domain/nostr";
 import {
   parseCashuEscrowDescriptorEvent,
@@ -60,16 +59,6 @@ function isTimeoutError(error: unknown): boolean {
   return externalErrorCode(error)?.includes("timeout") === true;
 }
 
-function sameUnsignedEvent(left: UnsignedNostrEvent, right: UnsignedNostrEvent): boolean {
-  return (
-    left.pubkey === right.pubkey &&
-    left.created_at === right.created_at &&
-    left.kind === right.kind &&
-    left.content === right.content &&
-    JSON.stringify(left.tags) === JSON.stringify(right.tags)
-  );
-}
-
 function validatedDescriptorDraft(
   descriptor: PontmoreEscrowDescriptor,
 ): PontmoreEscrowDescriptor {
@@ -100,12 +89,7 @@ export async function signCashuEscrowDescriptor(
   }
 
   const signed = parseSignedNostrEvent(signedValue);
-  if (!sameUnsignedEvent(draft, signed)) {
-    throw new NostrEventValidationError(
-      "invalid_nostr_event",
-      "Signer returned an event that does not match the PIP-01 draft",
-    );
-  }
+  assertSignedNostrEventMatchesDraft(draft, signed);
   verifySignedNostrEvent(signed);
   return signed;
 }

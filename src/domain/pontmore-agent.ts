@@ -50,8 +50,12 @@ function normalizeValues(values: readonly string[], field: string): readonly str
   return normalized;
 }
 
-function findTag(event: UnsignedNostrEvent, name: string): readonly string[] | undefined {
-  return event.tags.find((tag) => tag[0] === name);
+function singletonTag(event: UnsignedNostrEvent, name: "d" | "t" | "a"): readonly string[] {
+  const matches = event.tags.filter((tag) => tag[0] === name);
+  if (matches.length !== 1 || matches[0].length !== 2 || !matches[0][1]) {
+    throw new InvalidDomainInputError(`PIP-00 ${name} tag must occur exactly once`);
+  }
+  return matches[0];
 }
 
 export function createPontmoreAgentDefinition(input: CreateAgentDefinitionInput): PontmoreAgentDefinition {
@@ -96,12 +100,21 @@ export function parsePontmoreAgentDefinition(serialized: string): PontmoreAgentD
   if (event.kind !== PIP00_AGENT_DEFINITION_KIND) {
     throw new InvalidDomainInputError("PIP-00 agent definition must use kind 30360");
   }
-  const identifier = findTag(event, "d")?.[1];
-  if (!identifier || findTag(event, "t")?.[1] !== "agent" || !findTag(event, "relay")) {
+  if (
+    event.tags.some(
+      (tag) => ["d", "t", "relay", "a"].includes(tag[0]) && (tag.length !== 2 || !tag[1]),
+    )
+  ) {
+    throw new InvalidDomainInputError("PIP-00 agent definition contains invalid discovery tags");
+  }
+  const identifier = singletonTag(event, "d")[1];
+  if (
+    singletonTag(event, "t")[1] !== "agent" ||
+    event.tags.filter((tag) => tag[0] === "relay").length === 0
+  ) {
     throw new InvalidDomainInputError("PIP-00 agent definition is missing required discovery tags");
   }
-  const escrowReference = findTag(event, "a")?.[1];
-  if (!escrowReference) throw new InvalidDomainInputError("PIP-00 agent definition requires an escrow tag");
+  const escrowReference = singletonTag(event, "a")[1];
 
   let content: unknown;
   try {
@@ -134,7 +147,7 @@ export function parsePontmoreAgentDefinition(serialized: string): PontmoreAgentD
     throw new InvalidDomainInputError("PIP-00 content is invalid or inconsistent with its tags");
   }
 
-  return createPontmoreAgentDefinition({
+  const parsed = createPontmoreAgentDefinition({
     identity: {
       publicKey: event.pubkey,
       relays: event.tags.filter((tag) => tag[0] === "relay").map((tag) => tag[1]),
@@ -150,4 +163,8 @@ export function parsePontmoreAgentDefinition(serialized: string): PontmoreAgentD
     escrowDescriptorReference: escrowReference,
     updatedAt: candidate.updated_at as number,
   });
+  if (parsed.event.content !== event.content) {
+    throw new InvalidDomainInputError("PIP-00 content is not in its canonical application form");
+  }
+  return { ...parsed, event };
 }

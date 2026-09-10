@@ -186,3 +186,22 @@ export function verifySignedNostrEvent(event: SignedNostrEvent): void {
     );
   }
 }
+
+/** Ensures a signer added only the NIP-01 id and signature to the requested draft. */
+export function assertSignedNostrEventMatchesDraft(
+  draft: UnsignedNostrEvent,
+  signed: SignedNostrEvent,
+): void {
+  if (
+    draft.pubkey !== signed.pubkey ||
+    draft.created_at !== signed.created_at ||
+    draft.kind !== signed.kind ||
+    draft.content !== signed.content ||
+    JSON.stringify(draft.tags) !== JSON.stringify(signed.tags)
+  ) {
+    throw new NostrEventValidationError(
+      "invalid_nostr_event",
+      "Signer returned an event that does not match the requested draft",
+    );
+  }
+}

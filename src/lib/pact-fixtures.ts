@@ -3,7 +3,6 @@ import { btcToSats } from "../domain/money";
 import type { ProviderAgent, RequesterAgent, ServiceOffer } from "../domain/pact-agents";
 import { createPontmoreAgentDefinition } from "../domain/pontmore-agent";
 import { createCashuEscrowDescriptor, createCashuEscrowPlan } from "../domain/pontmore-escrow";
-import { createPontmoreTransitionDraft } from "../domain/pontmore-lifecycle";
 
 const FIXTURE_TIME = 1_788_853_200;
 const RELAYS = ["wss://relay.damus.io", "wss://nos.lol"] as const;
@@ -80,26 +79,5 @@ export function createPactDemoFixtures() {
     amountSats: offer.priceSats,
     timeoutSeconds: requester.policy.maximumEscrowDurationSeconds,
   });
-  const transitions = [
-    createPontmoreTransitionDraft({
-      identity: requesterIdentity,
-      swapId: "pact-demo-001",
-      previous: "requested",
-      next: "offer_accepted",
-      actorRole: "customer",
-      reason: "offer_within_policy",
-      createdAt: FIXTURE_TIME + 1,
-    }),
-    createPontmoreTransitionDraft({
-      identity: requesterIdentity,
-      swapId: "pact-demo-001",
-      previous: "offer_accepted",
-      next: "funding_intended",
-      actorRole: "customer",
-      reason: "cashu_escrow_selected",
-      createdAt: FIXTURE_TIME + 2,
-    }),
-  ] as const;
-
-  return { requester, provider, escrowDescriptor, escrowPlan, offer, transitions };
+  return { requester, provider, escrowDescriptor, escrowPlan, offer };
 }

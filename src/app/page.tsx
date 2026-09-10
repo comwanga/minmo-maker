@@ -1,5 +1,4 @@
 import { discoverCompatibleProviders, evaluateServiceOffer } from "@/domain/pact-agents";
-import { validateTransitionSequence } from "@/domain/pontmore-lifecycle";
 import { createPactDemoFixtures } from "@/lib/pact-fixtures";
 import { getProjectStatus } from "@/lib/status";
 
@@ -13,7 +12,6 @@ export default function Home() {
     offer: demo.offer,
     escrowDescriptor: demo.escrowDescriptor,
   });
-  const lifecycleState = validateTransitionSequence("requested", demo.transitions);
 
   return (
     <main>
@@ -90,12 +88,12 @@ export default function Home() {
         <div>
           <p className="eyebrow dark">Protocol boundary</p>
           <h2 id="boundary-heading">Public history. Private payloads.</h2>
-          <p className="boundaryNote">Current fixture state: <strong>{lifecycleState.replaceAll("_", " ")}</strong></p>
+          <p className="boundaryNote">Current fixture state: <strong>proposal inputs validated</strong></p>
         </div>
         <ol>
           <li><span>00</span><strong>Identity</strong><p>PIP-00 definitions advertise capabilities and reference a default escrow.</p></li>
           <li><span>01</span><strong>Escrow</strong><p>PIP-01 declares Cashu compatibility; tokens and secrets stay private.</p></li>
-          <li><span>02</span><strong>History</strong><p>PIP-02 transition drafts form a coherent append-only public lifecycle.</p></li>
+          <li><span>PA</span><strong>History</strong><p>PactAgent agreement events carry the service lifecycle; PIP-02 remains swap-only.</p></li>
           <li><span>03</span><strong>Recovery</strong><p>PIP-03 timeout fallbacks prevent permanently locked settlement paths.</p></li>
         </ol>
       </section>

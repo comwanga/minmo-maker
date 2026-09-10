@@ -29,10 +29,17 @@ The implementation follows the current draft PIPs from [`pontmore/protocol`](htt
 
 - **PIP-00, kind 30360:** an addressable agent-definition event with `d`, `t=agent`, `relay`, and default-escrow `a` tags. PactAgent uses a documented v1 shape inside the PIP's open `capabilities` field; the detailed P001/P002 policies remain separate application data.
 - **PIP-01, kind 30361:** a public escrow compatibility descriptor. The Cashu fixture declares `escrow_type=cashu_escrow`, canonical `networks=[cashu]`, 1-of-1 funding, `pip03` dispute policy with a recoverable refund-trigger timeout, and an opaque reference format. It contains no token, proof, preimage, credential, or private payment payload. Because draft PIP-01 requires an explicit timeout fallback but does not yet name its JSON fields, the nested `dispute_rules.timeout` shape is documented as a PactAgent v1 convention rather than a Pontmore standard.
-- **PIP-02, kinds 7300–7304 and 30362:** immutable request, transition, evidence, dispute, and note events plus replaceable snapshots. PIP-02 currently specifies transition fields and coherence but not state values; `DocumentSummaryLifecycleState` is therefore explicitly an application vocabulary carried by compliant transition drafts.
+- **PIP-02, kinds 7300–7304 and 30362:** remains swap-specific. The existing swap draft types are not used to represent the `document-summary` service agreement.
 - **PIP-03:** operator-governed dispute and timeout rules. PactAgent models the canonical refund-trigger timeout with a non-mutual fallback of cancelling and refunding. AI cannot create resolution modes.
 
-`PontmoreSwapRequestContent` records PIP-02's required kind-7300 fields, but this phase does not synthesize a document-service request event: the current PIP requires `fiat` and `bitcoin` payloads without defining a service-contract encoding. Deferring that event avoids inventing a protocol schema.
+`PontmoreSwapRequestContent` records PIP-02's required kind-7300 fields, but the
+document-summary path never synthesizes that event. Instead, PactAgent owns a
+generic agreement kernel plus the exact `document-summary@1` capability profile.
+Its immutable roots, transitions, and escrow-authority records use provisional
+regular kind `3921`. NIP-01 classifies kinds 1000–9999 as regular stored events.
+Kind `3921` is an unregistered PactAgent application convention, not a Pontmore
+PIP, not a Nostr standard, and not a new protocol. This work makes no registry
+proposal.
 
 The older Pontmore PoCs were inspected as implementation references only. Where they differ from current PIPs—particularly older PIP-01 service fields—the canonical PIPs win.
 
@@ -40,7 +47,10 @@ The older Pontmore PoCs were inspected as implementation references only. Where 
 
 Public protocol candidates include agent capabilities, escrow compatibility, agreement references, amounts, lifecycle states, result hashes/references, and settlement outcomes.
 
-Private data includes uploaded documents, raw prompts, complete provider results, sensitive evidence, raw Cashu tokens, mint credentials, preimages, payout instructions, and Nostr private keys. The first pivot phase models no private transport. Future transport should use the PIP-02 companion Gift Wrap lane.
+Private data includes uploaded documents, raw prompts, complete provider results,
+sensitive evidence, raw Cashu tokens, mint credentials, preimages, payout
+instructions, commitment salts, and Nostr private keys. None are accepted by the
+public agreement serializers. Private transport is outside issue #10.
 
 ## Authority separation
 
@@ -60,6 +70,22 @@ The PIP-01 workflow uses issue #4's `NostrRelayAdapter` and its typed
 `publish(event)` and `queryEvents(filter)` operations directly. Connection
 lifecycle and bounded WebSocket behavior belong to that adapter, not to the
 escrow domain.
+
+The PactAgent agreement workflow uses the same signer and relay ports. Root and
+transition drafts are deterministically validated before signing; signer output
+must preserve the draft and have a valid NIP-01 signature. Authorization is
+resolved from the root's requester/provider keys and an explicit agreement-scoped
+escrow-authority application binding. That binding is accepted only from a valid
+kind-3921 authority record signed by the selected descriptor owner and referencing
+the exact agreement, descriptor, Cashu network, and authority key. Neither
+`actor_role` nor merely authoring PIP-01 grants settlement authority.
+
+The profile validates the committed private task and exact submitted private
+result before producing a secret-free completion decision. `result_verified`
+requires that decision, and `release_authorized` requires the validated
+verification in its predecessor chain. No dispute transition is available
+because this repository has neither a service-schema dispute authority nor an
+application dispute-authority record.
 
 ## Local demo boundary
 
