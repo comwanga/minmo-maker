@@ -1,0 +1,240 @@
+import {
+  NostrEventValidationError,
+  parseSignedNostrEvent,
+  serializeUnsignedNostrEvent,
+  verifySignedNostrEvent,
+  type NostrSigner,
+  type SignedNostrEvent,
+  type UnsignedNostrEvent,
+} from "../domain/nostr";
+import {
+  parseCashuEscrowDescriptorEvent,
+  parsePontmoreEscrowDescriptorReference,
+  PIP01_ESCROW_DESCRIPTOR_KIND,
+  PontmoreEscrowDescriptorError,
+  type PontmoreEscrowDescriptor,
+} from "../domain/pontmore-escrow";
+import {
+  parsePontmoreAgentDefinition,
+  type PontmoreAgentDefinition,
+} from "../domain/pontmore-agent";
+import type {
+  NostrFilter,
+  NostrRelayAdapter,
+  NostrRelayPublishOptions,
+} from "./nostr-relay";
+
+export type Pip01PublicationErrorCode =
+  | "signing_failure"
+  | "publication_failure"
+  | "retrieval_failure"
+  | "timeout"
+  | "descriptor_not_found"
+  | "descriptor_agent_mismatch";
+
+export class Pip01PublicationError extends Error {
+  readonly code: Pip01PublicationErrorCode;
+
+  constructor(code: Pip01PublicationErrorCode, message: string) {
+    super(message);
+    this.name = "Pip01PublicationError";
+    this.code = code;
+  }
+}
+
+export const PIP01_RELAY_TIMEOUT_MS = 10_000;
+
+function operationOptions(options?: NostrRelayPublishOptions): NostrRelayPublishOptions {
+  return {
+    timeoutMs: options?.timeoutMs ?? PIP01_RELAY_TIMEOUT_MS,
+    signal: options?.signal,
+  };
+}
+
+function externalErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return externalErrorCode(error)?.includes("timeout") === true;
+}
+
+function sameUnsignedEvent(left: UnsignedNostrEvent, right: UnsignedNostrEvent): boolean {
+  return (
+    left.pubkey === right.pubkey &&
+    left.created_at === right.created_at &&
+    left.kind === right.kind &&
+    left.content === right.content &&
+    JSON.stringify(left.tags) === JSON.stringify(right.tags)
+  );
+}
+
+function validatedDescriptorDraft(
+  descriptor: PontmoreEscrowDescriptor,
+): PontmoreEscrowDescriptor {
+  const parsed = parseCashuEscrowDescriptorEvent(descriptor.event);
+  if (
+    parsed.identifier !== descriptor.identifier ||
+    parsed.address !== descriptor.address ||
+    JSON.stringify(parsed.content) !== JSON.stringify(descriptor.content)
+  ) {
+    throw new PontmoreEscrowDescriptorError(
+      "invalid_descriptor",
+      "PIP-01 descriptor model does not match its event draft",
+    );
+  }
+  return parsed;
+}
+
+export async function signCashuEscrowDescriptor(
+  descriptor: PontmoreEscrowDescriptor,
+  signer: NostrSigner,
+): Promise<SignedNostrEvent> {
+  const draft = validatedDescriptorDraft(descriptor).event;
+  let signedValue: SignedNostrEvent;
+  try {
+    signedValue = await signer.sign(draft);
+  } catch {
+    throw new Pip01PublicationError("signing_failure", "PIP-01 descriptor signing failed");
+  }
+
+  const signed = parseSignedNostrEvent(signedValue);
+  if (!sameUnsignedEvent(draft, signed)) {
+    throw new NostrEventValidationError(
+      "invalid_nostr_event",
+      "Signer returned an event that does not match the PIP-01 draft",
+    );
+  }
+  verifySignedNostrEvent(signed);
+  return signed;
+}
+
+export async function publishSignedCashuEscrowDescriptor(
+  event: SignedNostrEvent,
+  relay: NostrRelayAdapter,
+  options?: NostrRelayPublishOptions,
+): Promise<void> {
+  const signed = parseSignedNostrEvent(event);
+  verifySignedNostrEvent(signed);
+  parseCashuEscrowDescriptorEvent(signed);
+  try {
+    await relay.publish(signed, operationOptions(options));
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new Pip01PublicationError("timeout", "PIP-01 descriptor publication timed out");
+    }
+    throw new Pip01PublicationError(
+      "publication_failure",
+      "PIP-01 descriptor publication failed",
+    );
+  }
+}
+
+export async function signAndPublishCashuEscrowDescriptor(
+  descriptor: PontmoreEscrowDescriptor,
+  signer: NostrSigner,
+  relay: NostrRelayAdapter,
+  options?: NostrRelayPublishOptions,
+): Promise<SignedNostrEvent> {
+  const signed = await signCashuEscrowDescriptor(descriptor, signer);
+  await publishSignedCashuEscrowDescriptor(signed, relay, options);
+  return signed;
+}
+
+export function escrowDescriptorFilter(reference: string): NostrFilter {
+  const parsed = parsePontmoreEscrowDescriptorReference(reference);
+  return {
+    kinds: [PIP01_ESCROW_DESCRIPTOR_KIND],
+    authors: [parsed.publicKey],
+    tags: { d: [parsed.identifier] },
+    limit: 10,
+  };
+}
+
+function hasDescriptorAddress(event: SignedNostrEvent, reference: string): boolean {
+  const parsed = parsePontmoreEscrowDescriptorReference(reference);
+  const identifierTags = event.tags.filter((tag) => tag[0] === "d");
+  return (
+    event.kind === parsed.kind &&
+    event.pubkey === parsed.publicKey &&
+    identifierTags.length === 1 &&
+    identifierTags[0][1] === parsed.identifier
+  );
+}
+
+export async function retrieveCashuEscrowDescriptor(
+  reference: string,
+  relay: NostrRelayAdapter,
+  options?: NostrRelayPublishOptions,
+): Promise<PontmoreEscrowDescriptor<SignedNostrEvent>> {
+  const filter = escrowDescriptorFilter(reference);
+  let events: readonly SignedNostrEvent[];
+  try {
+    events = await relay.queryEvents(filter, operationOptions(options));
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new Pip01PublicationError("timeout", "PIP-01 descriptor retrieval timed out");
+    }
+    throw new Pip01PublicationError("retrieval_failure", "PIP-01 descriptor retrieval failed");
+  }
+
+  if (events.length === 0) {
+    throw new Pip01PublicationError("descriptor_not_found", "PIP-01 descriptor was not found");
+  }
+  const parsedEvents = events.map(parseSignedNostrEvent);
+  const matching = parsedEvents.filter((event) => hasDescriptorAddress(event, reference));
+  if (matching.length === 0) {
+    throw new Pip01PublicationError(
+      "descriptor_agent_mismatch",
+      "Relay result does not match the requested PIP-01 descriptor reference",
+    );
+  }
+
+  const candidates = matching.sort((left, right) => {
+    const timestampOrder = right.created_at - left.created_at;
+    return timestampOrder === 0 ? left.id.localeCompare(right.id) : timestampOrder;
+  });
+  const latest = candidates[0];
+  verifySignedNostrEvent(latest);
+  const descriptor = parseCashuEscrowDescriptorEvent(latest);
+  if (descriptor.address !== reference) {
+    throw new Pip01PublicationError(
+      "descriptor_agent_mismatch",
+      "Retrieved PIP-01 descriptor does not match its agent reference",
+    );
+  }
+  return descriptor;
+}
+
+export async function resolveAgentCashuEscrowDescriptor(
+  agentDefinition: PontmoreAgentDefinition,
+  relay: NostrRelayAdapter,
+  options?: NostrRelayPublishOptions,
+): Promise<PontmoreEscrowDescriptor<SignedNostrEvent>> {
+  const escrowTags = agentDefinition.event.tags.filter((tag) => tag[0] === "a");
+  if (
+    escrowTags.length !== 1 ||
+    escrowTags[0][1] !== agentDefinition.content.escrow
+  ) {
+    throw new Pip01PublicationError(
+      "descriptor_agent_mismatch",
+      "PIP-00 agent definition has inconsistent PIP-01 references",
+    );
+  }
+  const parsedAgent = parsePontmoreAgentDefinition(
+    serializeUnsignedNostrEvent(agentDefinition.event),
+  );
+  const descriptor = await retrieveCashuEscrowDescriptor(
+    parsedAgent.content.escrow,
+    relay,
+    options,
+  );
+  if (descriptor.address !== parsedAgent.content.escrow) {
+    throw new Pip01PublicationError(
+      "descriptor_agent_mismatch",
+      "PIP-00 agent definition and PIP-01 descriptor do not match",
+    );
+  }
+  return descriptor;
+}
