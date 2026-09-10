@@ -33,6 +33,7 @@ function createTestSigner(seed: number): { readonly publicKey: string; readonly 
   secretKey[31] = seed;
   const publicKey = getPublicKey(secretKey);
   const signer: NostrSigner = {
+    publicKey: nostrPublicKey(publicKey),
     async sign(event: UnsignedNostrEvent): Promise<SignedNostrEvent> {
       if (event.pubkey !== publicKey) throw new Error("test signer identity mismatch");
       const signed = finalizeEvent(
@@ -235,6 +236,7 @@ describe("PIP-01 Cashu descriptor signing and relay flow", () => {
   it("rejects a signer that changes descriptor data", async () => {
     const { descriptor, signer } = createSignedDescriptorFixture();
     const mutatingSigner: NostrSigner = {
+      publicKey: signer.publicKey,
       async sign(event) {
         return signer.sign({ ...event, content: "{}" });
       },
