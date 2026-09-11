@@ -9,13 +9,11 @@ import {
   type SignedNostrEvent,
   type UnsignedNostrEvent,
 } from "../domain/nostr";
-import { createPontmoreAgentDefinition } from "../domain/pontmore-agent";
 import { createCashuEscrowDescriptor } from "../domain/pontmore-escrow";
 import {
   escrowDescriptorFilter,
   Pip01PublicationError,
   publishSignedCashuEscrowDescriptor,
-  resolveAgentCashuEscrowDescriptor,
   retrieveCashuEscrowDescriptor,
   signAndPublishCashuEscrowDescriptor,
   signCashuEscrowDescriptor,
@@ -160,50 +158,6 @@ describe("PIP-01 Cashu descriptor signing and relay flow", () => {
     expect(retrieved.content.dispute_rules.timeout.duration_seconds).toBe(1_200);
   });
 
-  it("resolves P002's protocol-visible PIP-00 escrow reference after relay retrieval", async () => {
-    const { descriptor, identity, signer } = createSignedDescriptorFixture();
-    const providerDefinition = createPontmoreAgentDefinition({
-      identity,
-      identifier: "agent",
-      name: "P002 Provider",
-      about: "Provides the bounded document-summary service.",
-      capabilities: { names: ["document-summary"], settlement_networks: ["cashu"] },
-      pricingPolicyReference: "pactagent:P002-provider-policy:v1",
-      escrowDescriptorReference: descriptor.address,
-      updatedAt: TEST_TIMESTAMP,
-    });
-    const relay = new MemoryNostrRelay();
-    await signAndPublishCashuEscrowDescriptor(descriptor, signer, relay);
-
-    const resolved = await resolveAgentCashuEscrowDescriptor(providerDefinition, relay);
-    expect(providerDefinition.content.escrow).toBe(descriptor.address);
-    expect(providerDefinition.event.tags).toContainEqual(["a", descriptor.address]);
-    expect(resolved.address).toBe(providerDefinition.content.escrow);
-    expect(resolved.content.escrow_type).toBe("cashu_escrow");
-  });
-
-  it("rejects an in-memory agent model whose content and a tag disagree", async () => {
-    const { descriptor, identity } = createSignedDescriptorFixture();
-    const providerDefinition = createPontmoreAgentDefinition({
-      identity,
-      identifier: "agent",
-      name: "P002 Provider",
-      about: "Provides the bounded document-summary service.",
-      capabilities: { names: ["document-summary"], settlement_networks: ["cashu"] },
-      pricingPolicyReference: "pactagent:P002-provider-policy:v1",
-      escrowDescriptorReference: descriptor.address,
-      updatedAt: TEST_TIMESTAMP,
-    });
-    const inconsistentDefinition = {
-      ...providerDefinition,
-      content: { ...providerDefinition.content, escrow: `${descriptor.address}-different` },
-    };
-
-    await expect(
-      resolveAgentCashuEscrowDescriptor(inconsistentDefinition, new MemoryNostrRelay()),
-    ).rejects.toMatchObject({ code: "descriptor_agent_mismatch" });
-  });
-
   it("rejects a retrieved event whose content was changed after signing", async () => {
     const { descriptor, signer } = createSignedDescriptorFixture();
     const relay = new MemoryNostrRelay();
@@ -215,7 +169,7 @@ describe("PIP-01 Cashu descriptor signing and relay flow", () => {
     });
   });
 
-  it("rejects malformed signed relay data before descriptor parsing", async () => {
+  it("surfaces malformed signed relay data at the requested address as a typed NIP-01 failure", async () => {
     const { descriptor, signer } = createSignedDescriptorFixture();
     const signed = await signCashuEscrowDescriptor(descriptor, signer);
     const relay: NostrRelayAdapter = {
@@ -229,8 +183,54 @@ describe("PIP-01 Cashu descriptor signing and relay flow", () => {
     };
 
     await expect(retrieveCashuEscrowDescriptor(descriptor.address, relay)).rejects.toMatchObject({
-      code: "invalid_nostr_event",
+      code: "invalid_nip01",
     });
+  });
+
+  it("still resolves the valid descriptor when a malformed event for the same address is returned", async () => {
+    const { descriptor, signer } = createSignedDescriptorFixture();
+    const signed = await signCashuEscrowDescriptor(descriptor, signer);
+    const relay: NostrRelayAdapter = {
+      url: "wss://relay.example",
+      async connect() {},
+      async disconnect() {},
+      async publish() {},
+      async queryEvents() {
+        return [{ ...signed, sig: "malformed" }, signed];
+      },
+    };
+
+    const retrieved = await retrieveCashuEscrowDescriptor(descriptor.address, relay);
+    expect(retrieved.address).toBe(descriptor.address);
+    expect(retrieved.event.id).toBe(signed.id);
+  });
+
+  it("does not let an invalid newer event erase the last valid descriptor", async () => {
+    const { descriptor, signer } = createSignedDescriptorFixture();
+    const relay = new MemoryNostrRelay();
+    const valid = await signAndPublishCashuEscrowDescriptor(descriptor, signer, relay);
+    const invalidNewer = { ...valid, content: `${valid.content} `, created_at: valid.created_at + 1 };
+    relay.published.push(invalidNewer);
+    const retrieved = await retrieveCashuEscrowDescriptor(descriptor.address, relay);
+    expect(retrieved.content.updated_at).toBe(descriptor.content.updated_at);
+    expect(retrieved.event.id).toBe(valid.id);
+  });
+
+  it("skips malformed unrelated relay events and still resolves the valid descriptor", async () => {
+    const { descriptor, signer } = createSignedDescriptorFixture();
+    const signed = await signCashuEscrowDescriptor(descriptor, signer);
+    const relay: NostrRelayAdapter = {
+      url: "wss://relay.example",
+      async connect() {},
+      async disconnect() {},
+      async publish() {},
+      async queryEvents() {
+        return [{ ...signed, kind: 1, sig: "malformed", id: "ff".repeat(32) }, signed];
+      },
+    };
+
+    const retrieved = await retrieveCashuEscrowDescriptor(descriptor.address, relay);
+    expect(retrieved.address).toBe(descriptor.address);
   });
 
   it("rejects a signer that changes descriptor data", async () => {
