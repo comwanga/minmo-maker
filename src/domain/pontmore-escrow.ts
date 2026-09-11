@@ -1,6 +1,7 @@
 import { InvalidDomainInputError } from "./errors";
-import type { NostrIdentity, UnsignedNostrEvent } from "./nostr";
-import { parseUnsignedNostrEvent } from "./nostr";
+import { findForbiddenPublicMaterial, isForbiddenFieldName } from "./forbidden-material";
+import type { NostrIdentity, NostrPublicKey, UnsignedNostrEvent } from "./nostr";
+import { nostrPublicKey, parseUnsignedNostrEvent } from "./nostr";
 import type { Sats } from "./money";
 import { sats } from "./money";
 
@@ -112,7 +113,7 @@ export interface CreateCashuDescriptorInput {
 
 export interface PontmoreEscrowDescriptorReference {
   readonly kind: typeof PIP01_ESCROW_DESCRIPTOR_KIND;
-  readonly publicKey: NostrIdentity["publicKey"];
+  readonly publicKey: NostrPublicKey;
   readonly identifier: string;
 }
 
@@ -125,67 +126,15 @@ const CREATE_INPUT_KEYS = [
   "participantCount",
   "timeoutSeconds",
 ] as const;
-const FORBIDDEN_FIELD_NAMES = new Set([
-  "token",
-  "tokens",
-  "cashutoken",
-  "rawcashutoken",
-  "proof",
-  "proofs",
-  "mintcredential",
-  "mintcredentials",
-  "apicredential",
-  "apicredentials",
-  "apikey",
-  "privatekey",
-  "nostrsecretkey",
-  "secretkey",
-  "nsec",
-  "preimage",
-  "preimages",
-  "payoutinstruction",
-  "payoutinstructions",
-  "privateroutinginformation",
-  "privateroutingstate",
-  "internalcustodyidentifier",
-  "custodybackendidentifier",
-  "privatesettlementmetadata",
-  "settlementsecret",
-  "settlementsecrets",
-  "privatenote",
-  "privatenotes",
-  "walletidentifier",
-  "internalaccountdetails",
-]);
-
-function normalizedFieldName(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 function assertNoForbiddenPublicMaterial(value: unknown): void {
-  if (typeof value === "string") {
-    if (/nsec1[023456789acdefghjklmnpqrstuvwxyz]+/i.test(value) || /cashu[ab][a-z0-9_-]+/i.test(value)) {
-      throw new PontmoreEscrowDescriptorError(
-        "forbidden_public_field",
-        "PIP-01 public descriptor contains forbidden secret or token material",
-      );
-    }
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach(assertNoForbiddenPublicMaterial);
-    return;
-  }
-  if (typeof value !== "object" || value === null) return;
-  for (const [key, nested] of Object.entries(value)) {
-    if (FORBIDDEN_FIELD_NAMES.has(normalizedFieldName(key))) {
-      throw new PontmoreEscrowDescriptorError(
-        "forbidden_public_field",
-        "PIP-01 public descriptor contains a forbidden private field",
-      );
-    }
-    assertNoForbiddenPublicMaterial(nested);
-  }
+  const reason = findForbiddenPublicMaterial(value);
+  if (reason === undefined) return;
+  descriptorError(
+    "forbidden_public_field",
+    reason.kind === "field"
+      ? "PIP-01 public descriptor contains a forbidden private field"
+      : "PIP-01 public descriptor contains forbidden secret or token material",
+  );
 }
 
 function descriptorError(code: PontmoreEscrowDescriptorErrorCode, message: string): never {
@@ -282,7 +231,7 @@ export function parseCashuEscrowDescriptorEvent<TEvent extends UnsignedNostrEven
   }
   assertNoForbiddenPublicMaterial(event.tags);
   for (const tag of event.tags) {
-    if (FORBIDDEN_FIELD_NAMES.has(normalizedFieldName(tag[0]))) {
+    if (isForbiddenFieldName(tag[0])) {
       descriptorError(
         "forbidden_public_field",
         "PIP-01 public descriptor contains a forbidden private tag",
@@ -404,7 +353,7 @@ export function parsePontmoreEscrowDescriptorReference(
   }
   return {
     kind: PIP01_ESCROW_DESCRIPTOR_KIND,
-    publicKey: match[1] as NostrIdentity["publicKey"],
+    publicKey: nostrPublicKey(match[1]),
     identifier: requireIdentifier(match[2]),
   };
 }

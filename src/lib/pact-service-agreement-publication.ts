@@ -1,11 +1,12 @@
 import {
-  assertSignedNostrEventMatchesDraft,
+  NostrEventValidationError,
   nostrPublicKey,
   parseSignedNostrEvent,
   verifySignedNostrEvent,
   type NostrPublicKey,
   type NostrSigner,
   type SignedNostrEvent,
+  type UnsignedNostrEvent,
 } from "../domain/nostr";
 import {
   PACTAGENT_SERVICE_AGREEMENT_EVENT_KIND,
@@ -29,6 +30,11 @@ import type {
   NostrRelayAdapter,
   NostrRelayPublishOptions,
 } from "./nostr-relay";
+import {
+  isTimeoutError,
+  operationOptions,
+  sameUnsignedEvent,
+} from "./pontmore-publication-helpers";
 
 export type PactAgreementPublicationErrorCode =
   | "signing_failure"
@@ -52,22 +58,6 @@ export const PACT_AGREEMENT_RELAY_TIMEOUT_MS = 10_000;
 export const PACT_AGREEMENT_DEFAULT_QUERY_LIMIT = 256;
 export const PACT_AGREEMENT_MAX_QUERY_LIMIT = 1_000;
 
-function operationOptions(options?: NostrRelayPublishOptions): NostrRelayPublishOptions {
-  return {
-    timeoutMs: options?.timeoutMs ?? PACT_AGREEMENT_RELAY_TIMEOUT_MS,
-    signal: options?.signal,
-  };
-}
-
-function externalErrorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
-  return typeof error.code === "string" ? error.code : undefined;
-}
-
-function isTimeoutError(error: unknown): boolean {
-  return externalErrorCode(error)?.includes("timeout") === true;
-}
-
 function queryLimit(value?: number): number {
   const limit = value ?? PACT_AGREEMENT_DEFAULT_QUERY_LIMIT;
   if (!Number.isInteger(limit) || limit < 1 || limit > PACT_AGREEMENT_MAX_QUERY_LIMIT) {
@@ -77,6 +67,18 @@ function queryLimit(value?: number): number {
     );
   }
   return limit;
+}
+
+function assertSignedEventMatchesDraft(
+  draft: UnsignedNostrEvent,
+  signed: SignedNostrEvent,
+): void {
+  if (!sameUnsignedEvent(draft, signed)) {
+    throw new NostrEventValidationError(
+      "invalid_nostr_event",
+      "Signer returned an event that does not match the requested draft",
+    );
+  }
 }
 
 function assertSignerIdentity(signer: NostrSigner, expected: NostrPublicKey): void {
@@ -94,7 +96,10 @@ async function publish(
   options?: NostrRelayPublishOptions,
 ): Promise<void> {
   try {
-    await relay.publish(event, operationOptions(options));
+    await relay.publish(
+      event,
+      operationOptions(PACT_AGREEMENT_RELAY_TIMEOUT_MS, options),
+    );
   } catch (error) {
     if (isTimeoutError(error)) {
       throw new PactAgreementPublicationError("timeout", "PactAgent event publication timed out");
@@ -123,7 +128,7 @@ export async function signPactServiceAgreementRoot(input: {
     );
   }
   const signed = parseSignedNostrEvent(signerResult);
-  assertSignedNostrEventMatchesDraft(root.event, signed);
+  assertSignedEventMatchesDraft(root.event, signed);
   return validatePactServiceAgreementRoot(signed, input.references);
 }
 
@@ -186,7 +191,7 @@ export async function retrievePactServiceAgreementRoot(input: {
         requester,
         limit: input.limit,
       }),
-      operationOptions(input.options),
+      operationOptions(PACT_AGREEMENT_RELAY_TIMEOUT_MS, input.options),
     );
   } catch (error) {
     if (isTimeoutError(error)) {
@@ -247,7 +252,7 @@ export async function signPactAgreementTransition(input: {
     );
   }
   const signed = parseSignedNostrEvent(signerResult);
-  assertSignedNostrEventMatchesDraft(transition.event, signed);
+  assertSignedEventMatchesDraft(transition.event, signed);
   verifySignedNostrEvent(signed);
   return parsePactAgreementTransitionEvent(
     signed,
@@ -349,7 +354,7 @@ export async function retrievePactAgreementTransitions(input: {
         until: input.until,
         limit: input.limit,
       }),
-      operationOptions(input.options),
+      operationOptions(PACT_AGREEMENT_RELAY_TIMEOUT_MS, input.options),
     );
   } catch (error) {
     if (isTimeoutError(error)) {

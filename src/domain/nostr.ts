@@ -11,7 +11,6 @@ export interface NostrIdentity {
   readonly publicKey: NostrPublicKey;
   readonly relays: readonly string[];
 }
-
 /** An event awaiting a separate signer. It intentionally has no private-key field. */
 export interface UnsignedNostrEvent {
   readonly pubkey: NostrPublicKey;
@@ -183,25 +182,6 @@ export function verifySignedNostrEvent(event: SignedNostrEvent): void {
     throw new NostrEventValidationError(
       "invalid_signature",
       "Nostr event id or signature is invalid",
-    );
-  }
-}
-
-/** Ensures a signer added only the NIP-01 id and signature to the requested draft. */
-export function assertSignedNostrEventMatchesDraft(
-  draft: UnsignedNostrEvent,
-  signed: SignedNostrEvent,
-): void {
-  if (
-    draft.pubkey !== signed.pubkey ||
-    draft.created_at !== signed.created_at ||
-    draft.kind !== signed.kind ||
-    draft.content !== signed.content ||
-    JSON.stringify(draft.tags) !== JSON.stringify(signed.tags)
-  ) {
-    throw new NostrEventValidationError(
-      "invalid_nostr_event",
-      "Signer returned an event that does not match the requested draft",
     );
   }
 }

@@ -11,8 +11,7 @@ import {
   type UnsignedNostrEvent,
 } from "./nostr";
 import {
-  parsePontmoreAgentDefinition,
-  PIP00_AGENT_DEFINITION_KIND,
+  parsePontmoreAgentDefinitionEvent,
   type PontmoreAgentDefinition,
 } from "./pontmore-agent";
 import {
@@ -129,9 +128,7 @@ export interface PactAgreementReferences {
   readonly escrowDescriptor: SignedNostrEvent;
 }
 
-type SignedPontmoreAgentDefinition = Omit<PontmoreAgentDefinition, "event"> & {
-  readonly event: SignedNostrEvent;
-};
+type SignedPontmoreAgentDefinition = PontmoreAgentDefinition<SignedNostrEvent>;
 
 const escrowAuthorityBindingBrand: unique symbol = Symbol("PactEscrowAuthorityBinding");
 const completionDecisionBrand: unique symbol = Symbol("PactCompletionDecision");
@@ -502,16 +499,11 @@ function validateSignedAgentDefinition(
 ): SignedPontmoreAgentDefinition {
   const signed = parseSignedNostrEvent(value);
   verifySignedNostrEvent(signed);
-  const parsed = parsePontmoreAgentDefinition(serializeUnsignedNostrEvent(unsignedPart(signed)));
-  const identifierTags = signed.tags.filter((tag) => tag[0] === "d");
-  if (identifierTags.length !== 1 || parsed.event.pubkey !== signed.pubkey) {
-    agreementError("invalid_reference", "PIP-00 definition reference is invalid");
-  }
-  return { ...parsed, event: signed };
+  return parsePontmoreAgentDefinitionEvent(signed);
 }
 
 function definitionAddress(definition: SignedPontmoreAgentDefinition): string {
-  return `${PIP00_AGENT_DEFINITION_KIND}:${definition.event.pubkey}:${definition.identifier}`;
+  return definition.address;
 }
 
 function validateAgreementReferences(references: PactAgreementReferences): {
