@@ -177,7 +177,7 @@ function validateCapabilityProfile(value: unknown): PactServiceOfferCapabilityPr
 }
 
 export function parsePactServiceOfferReference(reference: string): PactServiceOfferReference {
-  const match = /^30400:([0-9a-f]{64}):(.+)$/.exec(reference);
+  const match = new RegExp(`^${PACTAGENT_SERVICE_OFFER_KIND}:([0-9a-f]{64}):(.+)$`).exec(reference);
   if (!match) {
     offerError("malformed_offer_reference", "PactAgent service-offer reference is malformed");
   }

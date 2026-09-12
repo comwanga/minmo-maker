@@ -11,7 +11,6 @@ import {
   PACTAGENT_SERVICE_OFFER_KIND,
   PactServiceOfferError,
   type PactServiceOffer,
-  type PactServiceOfferReference,
 } from "../domain/pact-service-offer";
 import type { NostrFilter, NostrRelayAdapter, NostrRelayPublishOptions } from "./nostr-relay";
 import { isTimeoutError, operationOptions, sameUnsignedEvent } from "./pontmore-publication-helpers";
@@ -118,15 +117,6 @@ function hasOfferAddress(event: SignedNostrEvent, reference: string): boolean {
   );
 }
 
-function matchesRawOfferAddress(raw: unknown, ref: PactServiceOfferReference): boolean {
-  if (typeof raw !== "object" || raw === null) return false;
-  const r = raw as Record<string, unknown>;
-  if (r.kind !== ref.kind || typeof r.pubkey !== "string" || r.pubkey !== ref.publicKey) return false;
-  if (!Array.isArray(r.tags)) return false;
-  const dTags = r.tags.filter((tag: unknown) => Array.isArray(tag) && tag[0] === "d");
-  return dTags.length === 1 && dTags[0][1] === ref.identifier;
-}
-
 function mapOfferValidationError(error: unknown): PactServiceOfferPublicationError {
   if (error instanceof NostrEventValidationError) {
     return error.code === "invalid_signature"
@@ -144,7 +134,6 @@ export async function retrievePactServiceOffer(
   relay: NostrRelayAdapter,
   options?: NostrRelayPublishOptions,
 ): Promise<PactServiceOffer<SignedNostrEvent>> {
-  const ref = parsePactServiceOfferReference(reference);
   const filter = pactServiceOfferFilter(reference);
   let events: readonly SignedNostrEvent[];
   try {
@@ -165,43 +154,39 @@ export async function retrievePactServiceOffer(
     return timestampOrder === 0 ? left.id.localeCompare(right.id) : timestampOrder;
   });
 
-  let anyAddressMatch = false;
-  let firstError: PactServiceOfferPublicationError | undefined;
+  /*
+   * Select only the newest event for this address (replacement ordering).
+   * Unlike a fallback approach, a stale older valid offer is NOT used when a
+   * newer authentic replacement exists — even if the newer one is malformed.
+   * This prevents selecting superseded offers and ensures discovery reflects
+   * current live relay data. If the newest event is malformed, the offer is
+   * rejected rather than falling back to an older version.
+   */
+  const newest = sorted[0];
 
-  for (const raw of sorted) {
-    let parsedEvent: SignedNostrEvent;
-    try {
-      parsedEvent = parseSignedNostrEvent(raw);
-    } catch (error) {
-      if (matchesRawOfferAddress(raw, ref)) {
-        anyAddressMatch = true;
-        if (!firstError) firstError = mapOfferValidationError(error);
-      }
-      continue;
-    }
-
-    if (!hasOfferAddress(parsedEvent, reference)) continue;
-    anyAddressMatch = true;
-
-    try {
-      verifySignedNostrEvent(parsedEvent);
-      const offer = parsePactServiceOfferEvent(parsedEvent);
-      if (offer.address !== reference) {
-        throw new PactServiceOfferPublicationError("address_mismatch", "Retrieved PactAgent service-offer does not match its reference");
-      }
-      return offer;
-    } catch (error) {
-      if (error instanceof PactServiceOfferPublicationError) throw error;
-      if (!firstError) firstError = mapOfferValidationError(error);
-    }
+  let parsedEvent: SignedNostrEvent;
+  try {
+    parsedEvent = parseSignedNostrEvent(newest);
+  } catch (error) {
+    throw mapOfferValidationError(error);
   }
 
-  if (!anyAddressMatch) {
+  if (!hasOfferAddress(parsedEvent, reference)) {
     throw new PactServiceOfferPublicationError(
       "address_mismatch",
       "Relay result does not match the requested PactAgent service-offer reference",
     );
   }
 
-  throw firstError ?? new PactServiceOfferPublicationError("invalid_offer", "PactAgent service-offer is invalid");
+  try {
+    verifySignedNostrEvent(parsedEvent);
+    const offer = parsePactServiceOfferEvent(parsedEvent);
+    if (offer.address !== reference) {
+      throw new PactServiceOfferPublicationError("address_mismatch", "Retrieved PactAgent service-offer does not match its reference");
+    }
+    return offer;
+  } catch (error) {
+    if (error instanceof PactServiceOfferPublicationError) throw error;
+    throw mapOfferValidationError(error);
+  }
 }

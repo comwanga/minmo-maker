@@ -258,14 +258,15 @@ describe("PactAgent service-offer publication", () => {
       expect(retrieved.amountSats).toBe(btcToSats("0.00000300"));
     });
 
-    it("does not let an invalid newer event erase the last valid offer", async () => {
+    it("rejects an invalid newer event rather than falling back to a stale offer", async () => {
       const { signer, offer } = createOfferFixture();
       const relay = new MemoryNostrRelay();
       const valid = await signAndPublishPactServiceOffer(offer, signer, relay);
       const invalidNewer = { ...valid, content: `${valid.content} `, created_at: valid.created_at + 1 };
       relay.published.push(invalidNewer);
-      const retrieved = await retrievePactServiceOffer(offer.address, relay);
-      expect(retrieved.event.created_at).toBe(valid.created_at);
+      await expect(retrievePactServiceOffer(offer.address, relay)).rejects.toMatchObject({
+        code: "invalid_signature",
+      });
     });
 
     it("rejects not-found", async () => {

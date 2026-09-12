@@ -123,7 +123,7 @@ export interface DiscoveryResult {
   readonly rejections: readonly DiscoveryRejection[];
 }
 
-export type DiscoveryErrorCode = "profile_query_failed" | "profile_query_timeout";
+export type DiscoveryErrorCode = "profile_query_failed" | "profile_query_timeout" | "invalid_input";
 
 export class DiscoveryError extends Error {
   readonly code: DiscoveryErrorCode;
@@ -143,14 +143,6 @@ export interface DiscoverProvidersInput {
   readonly bounds?: Partial<DiscoveryBounds>;
   readonly options?: NostrRelayPublishOptions;
   readonly providerConstraints?: ReadonlyMap<string, ProviderConstraints>;
-  /*
-   * Optional advisory preference among ALREADY-AUTHORIZED candidates only. It
-   * can never authorize a rejected offer and only breaks ties after the
-   * deterministic price and execution-duration ordering. When omitted, the
-   * provider public key ascending is the final stable tie-break. Relay order,
-   * arrival time, and AI preference never determine the economic result.
-   */
-  readonly advisoryPreferredProviders?: readonly string[];
 }
 
 const CAPABILITY_PROFILE_BY_CAPABILITY: Readonly<Record<ServiceCapability, string>> = {
@@ -174,24 +166,30 @@ function profileDiscoveryFilter(maxProfiles: number): NostrFilter {
 }
 
 /*
- * Group raw profile events by their declared pubkey so duplicate or
- * multi-version events for one identity cannot crowd other providers out of
- * the bounded profile window. Returns groups in insertion order; each group is
+ * Group raw profile events by their stable replaceable address
+ * (<kind>:<pubkey>:<d-tag>) so only events for the same definition compete
+ * for replacement. This prevents two different PIP-00 definitions for the same
+ * pubkey (e.g. different d tags) from collapsing into one, and prevents
+ * duplicate/multi-version events from crowding other providers out of the
+ * bounded profile window. Returns groups in insertion order; each group is
  * sorted newest-first (created_at desc, then id asc) so the current valid
  * profile can be selected by replacement ordering.
  */
-function groupProfilesByPubkey(
+function groupProfilesByAddress(
   events: readonly SignedNostrEvent[],
-): readonly { readonly pubkey: string; readonly events: readonly SignedNostrEvent[] }[] {
+): readonly { readonly address: string; readonly events: readonly SignedNostrEvent[] }[] {
   const groups = new Map<string, SignedNostrEvent[]>();
   for (const event of events) {
     if (typeof event.pubkey !== "string") continue;
-    const list = groups.get(event.pubkey);
+    const dTag = event.tags.find((tag) => tag[0] === "d" && typeof tag[1] === "string");
+    if (!dTag) continue;
+    const address = `${event.kind}:${event.pubkey}:${dTag[1]}`;
+    const list = groups.get(address);
     if (list) list.push(event);
-    else groups.set(event.pubkey, [event]);
+    else groups.set(address, [event]);
   }
-  return [...groups.entries()].map(([pubkey, groupEvents]) => ({
-    pubkey,
+  return [...groups.entries()].map(([address, groupEvents]) => ({
+    address,
     events: [...groupEvents].sort((left, right) => {
       const timestampOrder = right.created_at - left.created_at;
       return timestampOrder === 0 ? left.id.localeCompare(right.id) : timestampOrder;
@@ -433,38 +431,31 @@ function evaluateEconomicPolicy(
 }
 
 function compareAuthorizedCandidates(
-  advisory: readonly string[] | undefined,
-): (left: AuthorizedProviderCandidate, right: AuthorizedProviderCandidate) => number {
-  return (left, right) => {
-    if (left.offer.amountSats !== right.offer.amountSats) {
-      return left.offer.amountSats < right.offer.amountSats ? -1 : 1;
-    }
-    const leftDuration = left.offer.content.maximum_execution_seconds;
-    const rightDuration = right.offer.content.maximum_execution_seconds;
-    if (leftDuration !== rightDuration) {
-      return leftDuration < rightDuration ? -1 : 1;
-    }
-    if (advisory) {
-      const leftIndex = advisory.indexOf(left.providerPublicKey);
-      const rightIndex = advisory.indexOf(right.providerPublicKey);
-      const leftRank = leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex;
-      const rightRank = rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex;
-      if (leftRank !== rightRank) {
-        return leftRank < rightRank ? -1 : 1;
-      }
-    }
-    return left.providerPublicKey < right.providerPublicKey ? -1 : left.providerPublicKey > right.providerPublicKey ? 1 : 0;
-  };
+  left: AuthorizedProviderCandidate,
+  right: AuthorizedProviderCandidate,
+): number {
+  if (left.offer.amountSats !== right.offer.amountSats) {
+    return left.offer.amountSats < right.offer.amountSats ? -1 : 1;
+  }
+  const leftDuration = left.offer.content.maximum_execution_seconds;
+  const rightDuration = right.offer.content.maximum_execution_seconds;
+  if (leftDuration !== rightDuration) {
+    return leftDuration < rightDuration ? -1 : 1;
+  }
+  return left.providerPublicKey < right.providerPublicKey ? -1 : left.providerPublicKey > right.providerPublicKey ? 1 : 0;
 }
 
 export async function discoverProviders(input: DiscoverProvidersInput): Promise<DiscoveryResult> {
+  if (!Number.isFinite(input.now) || !Number.isInteger(input.now) || input.now < 0) {
+    throw new DiscoveryError("invalid_input", "Discovery now must be a finite non-negative integer");
+  }
   const maxProfiles = input.bounds?.maxProfiles ?? DEFAULT_DISCOVERY_MAX_PROFILES;
   const maxResolutions = input.bounds?.maxResolutions ?? DEFAULT_DISCOVERY_MAX_RESOLUTIONS;
   if (!Number.isInteger(maxProfiles) || maxProfiles < 1) {
-    throw new DiscoveryError("profile_query_failed", "Discovery bounds maxProfiles must be a positive integer");
+    throw new DiscoveryError("invalid_input", "Discovery bounds maxProfiles must be a positive integer");
   }
   if (!Number.isInteger(maxResolutions) || maxResolutions < 0) {
-    throw new DiscoveryError("profile_query_failed", "Discovery bounds maxResolutions must be a non-negative integer");
+    throw new DiscoveryError("invalid_input", "Discovery bounds maxResolutions must be a non-negative integer");
   }
   if (!input.requesterPolicy.allowedCapabilities.includes(input.capability)) {
     return { candidates: [], selected: undefined, rejections: [] };
@@ -483,27 +474,27 @@ export async function discoverProviders(input: DiscoverProvidersInput): Promise<
     throw new DiscoveryError("profile_query_failed", "PIP-00 profile discovery query failed");
   }
 
-  const groupedProfiles = groupProfilesByPubkey(rawProfiles).slice(0, maxProfiles);
+  const groupedProfiles = groupProfilesByAddress(rawProfiles).slice(0, maxProfiles);
   const rejections: DiscoveryRejection[] = [];
   const candidates: AuthorizedProviderCandidate[] = [];
   let resolutionsRemaining = maxResolutions;
 
   for (const group of groupedProfiles) {
-    let definition: PontmoreAgentDefinition<SignedNostrEvent> | undefined;
-    let groupRejection: DiscoveryRejection | undefined;
-    for (const raw of group.events) {
-      const profile = await resolveProfile(raw);
-      if ("rejection" in profile) {
-        if (!groupRejection) groupRejection = profile.rejection;
-        continue;
-      }
-      definition = profile;
-      break;
-    }
-    if (!definition) {
-      if (groupRejection) rejections.push(groupRejection);
+    /*
+     * Select only the newest event for this address (replacement ordering).
+     * Unlike the previous fallback approach, a stale older valid event is NOT
+     * used when a newer authentic replacement exists — even if the newer one
+     * is malformed. This prevents selecting superseded definitions/offers and
+     * ensures discovery reflects current live relay data.
+     */
+    const newest = group.events[0];
+    if (!newest) continue;
+    const profile = await resolveProfile(newest);
+    if ("rejection" in profile) {
+      rejections.push(profile.rejection);
       continue;
     }
+    const definition = profile;
 
     const capabilityRejection = evaluateCapabilityCompatibility(definition, input.capability, input.requesterPolicy);
     if (capabilityRejection) {
@@ -567,7 +558,7 @@ export async function discoverProviders(input: DiscoverProvidersInput): Promise<
     });
   }
 
-  const sorted = [...candidates].sort(compareAuthorizedCandidates(input.advisoryPreferredProviders));
+  const sorted = [...candidates].sort(compareAuthorizedCandidates);
   const winner = sorted[0];
   const selected = winner
     ? {

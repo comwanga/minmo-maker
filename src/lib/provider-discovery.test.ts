@@ -294,12 +294,11 @@ describe("relay-backed provider discovery", () => {
         capability: "document-summary",
         relay,
         now: FIXTURE_TIME + 60,
-        advisoryPreferredProviders: undefined,
       });
       expect(result.selected).toBeDefined();
     });
 
-    it("AI recommendation of a rejected provider is still rejected by deterministic policy", async () => {
+    it("a rejected provider cannot be selected regardless of caller intent", async () => {
       const relay = new MemoryNostrRelay();
       const overBudget = createProviderBundle(2, { amountSats: btcToSats("0.00000501") });
       await publishBundle(overBudget, relay);
@@ -308,7 +307,6 @@ describe("relay-backed provider discovery", () => {
         capability: "document-summary",
         relay,
         now: FIXTURE_TIME + 60,
-        advisoryPreferredProviders: [overBudget.publicKey],
       });
       expect(result.candidates).toEqual([]);
       expect(result.selected).toBeUndefined();
@@ -761,7 +759,7 @@ describe("relay-backed provider discovery", () => {
       expect(result.candidates[0].definition.event.created_at).toBe(FIXTURE_TIME + 1);
     });
 
-    it("does not let an invalid newer profile erase the last valid profile", async () => {
+    it("rejects an invalid newer profile rather than falling back to a stale one", async () => {
       const relay = new MemoryNostrRelay();
       const p002 = createProviderBundle(2);
       await publishBundle(p002, relay);
@@ -777,9 +775,8 @@ describe("relay-backed provider discovery", () => {
         relay,
         now: FIXTURE_TIME + 60,
       });
-      expect(result.candidates).toHaveLength(1);
-      expect(result.candidates[0].definition.content.name).toBe("Provider");
-      expect(result.candidates[0].definition.event.created_at).toBe(validProfile.created_at);
+      expect(result.candidates).toEqual([]);
+      expect(result.rejections.some((r) => r.category === "invalid_pip00_profile" || r.category === "invalid_nostr_event")).toBe(true);
     });
   });
 
@@ -868,7 +865,7 @@ describe("relay-backed provider discovery", () => {
       expect(resultA.selected?.selected.providerPublicKey).toBe(x.publicKey);
     });
 
-    it("advisory preference only breaks ties after deterministic ordering and never overrides price", async () => {
+    it("lowest price always wins regardless of relay order", async () => {
       const relay = new MemoryNostrRelay();
       const cheap = createProviderBundle(2, { amountSats: btcToSats("0.00000300") });
       const expensive = createProviderBundle(3, { amountSats: btcToSats("0.00000400") });
@@ -879,12 +876,11 @@ describe("relay-backed provider discovery", () => {
         capability: "document-summary",
         relay,
         now: FIXTURE_TIME + 60,
-        advisoryPreferredProviders: [expensive.publicKey, cheap.publicKey],
       });
       expect(result.selected?.selected.providerPublicKey).toBe(cheap.publicKey);
     });
 
-    it("advisory preference breaks an equal-price, equal-duration tie", async () => {
+    it("equal-price, equal-duration ties are broken by provider pubkey ascending", async () => {
       const relay = new MemoryNostrRelay();
       const a = createProviderBundle(2, {
         amountSats: btcToSats("0.00000350"),
@@ -896,18 +892,66 @@ describe("relay-backed provider discovery", () => {
       });
       await publishBundle(a, relay);
       await publishBundle(b, relay);
+      const expectedWinner = [a.publicKey, b.publicKey].sort()[0];
       const result = await discoverProviders({
         requesterPolicy: REQUESTER_POLICY,
         capability: "document-summary",
         relay,
         now: FIXTURE_TIME + 60,
-        advisoryPreferredProviders: [b.publicKey, a.publicKey],
       });
-      expect(result.selected?.selected.providerPublicKey).toBe(b.publicKey);
+      expect(result.selected?.selected.providerPublicKey).toBe(expectedWinner);
     });
   });
 
   describe("bounds and failure handling", () => {
+    it("rejects a NaN now timestamp", async () => {
+      const relay = new MemoryNostrRelay();
+      await expect(
+        discoverProviders({
+          requesterPolicy: REQUESTER_POLICY,
+          capability: "document-summary",
+          relay,
+          now: Number.NaN,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+    });
+
+    it("rejects a negative now timestamp", async () => {
+      const relay = new MemoryNostrRelay();
+      await expect(
+        discoverProviders({
+          requesterPolicy: REQUESTER_POLICY,
+          capability: "document-summary",
+          relay,
+          now: -1,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+    });
+
+    it("rejects a non-integer now timestamp", async () => {
+      const relay = new MemoryNostrRelay();
+      await expect(
+        discoverProviders({
+          requesterPolicy: REQUESTER_POLICY,
+          capability: "document-summary",
+          relay,
+          now: 100.5,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+    });
+
+    it("rejects an Infinity now timestamp", async () => {
+      const relay = new MemoryNostrRelay();
+      await expect(
+        discoverProviders({
+          requesterPolicy: REQUESTER_POLICY,
+          capability: "document-summary",
+          relay,
+          now: Number.POSITIVE_INFINITY,
+        }),
+      ).rejects.toMatchObject({ code: "invalid_input" });
+    });
+
     it("bounds the number of profiles processed", async () => {
       const relay = new MemoryNostrRelay();
       const p002 = createProviderBundle(2);
