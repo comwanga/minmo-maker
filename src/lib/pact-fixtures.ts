@@ -3,6 +3,10 @@ import { btcToSats } from "../domain/money";
 import type { ProviderAgent, RequesterAgent, ServiceOffer } from "../domain/pact-agents";
 import { createPontmoreAgentDefinition } from "../domain/pontmore-agent";
 import { createCashuEscrowDescriptor, createCashuEscrowPlan } from "../domain/pontmore-escrow";
+import {
+  createPactServiceOffer,
+  PACTAGENT_DOCUMENT_SUMMARY_CAPABILITY_ID,
+} from "../domain/pact-service-offer";
 import { createPontmoreTransitionDraft } from "../domain/pontmore-lifecycle";
 
 const FIXTURE_TIME = 1_788_853_200;
@@ -16,6 +20,18 @@ export function createPactDemoFixtures() {
     identifier: "cashu-document-summary",
     updatedAt: FIXTURE_TIME,
     referenceFormat: "opaque_service_reference",
+  });
+  const serviceOffer = createPactServiceOffer({
+    identity: providerIdentity,
+    identifier: "document-summary-offer",
+    capabilityProfile: { id: PACTAGENT_DOCUMENT_SUMMARY_CAPABILITY_ID, version: 1 },
+    amountSats: btcToSats("0.00000350"),
+    settlementNetwork: "cashu",
+    escrowDescriptorReference: escrowDescriptor.address,
+    maximumExecutionSeconds: 120,
+    validFrom: FIXTURE_TIME,
+    expiresAt: FIXTURE_TIME + 3_600,
+    updatedAt: FIXTURE_TIME,
   });
   const requesterDefinition = createPontmoreAgentDefinition({
     identity: requesterIdentity,
@@ -36,7 +52,7 @@ export function createPactDemoFixtures() {
     name: "P002 Provider",
     about: "Provides the bounded document-summary service.",
     capabilities: { names: ["document-summary"], settlement_networks: ["cashu"] },
-    pricingPolicyReference: "pactagent:P002-provider-policy:v1",
+    pricingPolicyReference: serviceOffer.address,
     escrowDescriptorReference: escrowDescriptor.address,
     updatedAt: FIXTURE_TIME,
   });
@@ -101,5 +117,5 @@ export function createPactDemoFixtures() {
     }),
   ] as const;
 
-  return { requester, provider, escrowDescriptor, escrowPlan, offer, transitions };
+  return { requester, provider, escrowDescriptor, escrowPlan, offer, serviceOffer, transitions };
 }

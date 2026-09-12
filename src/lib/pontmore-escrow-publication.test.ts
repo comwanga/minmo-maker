@@ -205,15 +205,36 @@ describe("PIP-01 Cashu descriptor signing and relay flow", () => {
     expect(retrieved.event.id).toBe(signed.id);
   });
 
-  it("does not let an invalid newer event erase the last valid descriptor", async () => {
+  it("ignores a forged newer event and returns the authentic descriptor", async () => {
     const { descriptor, signer } = createSignedDescriptorFixture();
     const relay = new MemoryNostrRelay();
     const valid = await signAndPublishCashuEscrowDescriptor(descriptor, signer, relay);
-    const invalidNewer = { ...valid, content: `${valid.content} `, created_at: valid.created_at + 1 };
-    relay.published.push(invalidNewer);
+    const forgedNewer = { ...valid, content: `${valid.content} `, created_at: valid.created_at + 1 };
+    relay.published.push(forgedNewer);
     const retrieved = await retrieveCashuEscrowDescriptor(descriptor.address, relay);
     expect(retrieved.content.updated_at).toBe(descriptor.content.updated_at);
     expect(retrieved.event.id).toBe(valid.id);
+  });
+
+  it("rejects an authentic malformed descriptor replacement without falling back", async () => {
+    const { descriptor, signer } = createSignedDescriptorFixture();
+    const relay = new MemoryNostrRelay();
+    await signAndPublishCashuEscrowDescriptor(descriptor, signer, relay);
+    const content = JSON.parse(descriptor.event.content) as Record<string, unknown>;
+    const malformedReplacement = await signer.sign({
+      ...descriptor.event,
+      created_at: descriptor.event.created_at + 1,
+      content: JSON.stringify({
+        ...content,
+        version: 2,
+        updated_at: descriptor.event.created_at + 1,
+      }),
+    });
+    relay.published.push(malformedReplacement);
+
+    await expect(
+      retrieveCashuEscrowDescriptor(descriptor.address, relay),
+    ).rejects.toMatchObject({ code: "invalid_descriptor" });
   });
 
   it("skips malformed unrelated relay events and still resolves the valid descriptor", async () => {
