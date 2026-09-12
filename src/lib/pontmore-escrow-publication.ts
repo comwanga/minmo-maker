@@ -236,5 +236,3 @@ export async function retrieveCashuEscrowDescriptor(
     throw mapDescriptorValidationError(error);
   }
 }
-
-

@@ -11,7 +11,6 @@ export interface NostrIdentity {
   readonly publicKey: NostrPublicKey;
   readonly relays: readonly string[];
 }
-
 /** An event awaiting a separate signer. It intentionally has no private-key field. */
 export interface UnsignedNostrEvent {
   readonly pubkey: NostrPublicKey;
