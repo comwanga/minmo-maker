@@ -8,8 +8,13 @@ import {
   type SignedNostrEvent,
   type UnsignedNostrEvent,
 } from "../domain/nostr";
+import { sats } from "../domain/money";
 import { createPontmoreAgentDefinition } from "../domain/pontmore-agent";
 import { createCashuEscrowDescriptor } from "../domain/pontmore-escrow";
+import {
+  createPactServiceOffer,
+  PACTAGENT_DOCUMENT_SUMMARY_CAPABILITY_ID,
+} from "../domain/pact-service-offer";
 import {
   DOCUMENT_SUMMARY_PROFILE_ID,
   PACTAGENT_SERVICE_AGREEMENT_EVENT_KIND,
@@ -28,7 +33,9 @@ import type {
   NostrRelayAdapter,
 } from "./nostr-relay";
 import { createLocalNostrSigner } from "./nostr-signer";
+import { discoverProviders, type DiscoverySelection } from "./provider-discovery";
 import {
+  createPactServiceAgreementRootFromDiscovery,
   retrieveAndReconstructPactAgreement,
   retrievePactAgreementTransitions,
   retrievePactServiceAgreementRoot,
@@ -180,6 +187,84 @@ function createFixture() {
   };
 }
 
+async function createDiscoverySelectionFixture(): Promise<{
+  readonly selection: DiscoverySelection;
+  readonly requesterDefinition: SignedNostrEvent;
+  readonly requesterKey: Uint8Array;
+  readonly relay: MemoryRelay;
+}> {
+  const requesterKey = syntheticKey(31);
+  const providerKey = syntheticKey(32);
+  const requester = syntheticIdentity(requesterKey);
+  const provider = syntheticIdentity(providerKey);
+  const relay = new MemoryRelay();
+  const descriptor = createCashuEscrowDescriptor({
+    identity: provider,
+    identifier: "discovered-cashu-summary",
+    updatedAt: CREATED_AT - 10,
+    referenceFormat: "opaque_service_reference",
+  });
+  const offer = createPactServiceOffer({
+    identity: provider,
+    identifier: "discovered-document-summary",
+    capabilityProfile: {
+      id: PACTAGENT_DOCUMENT_SUMMARY_CAPABILITY_ID,
+      version: 1,
+    },
+    amountSats: sats(350n),
+    settlementNetwork: "cashu",
+    escrowDescriptorReference: descriptor.address,
+    maximumExecutionSeconds: 120,
+    validFrom: CREATED_AT - 10,
+    expiresAt: CREATED_AT + 300,
+    updatedAt: CREATED_AT - 10,
+  });
+  const requesterDefinition = createPontmoreAgentDefinition({
+    identity: requester,
+    identifier: "discovery-requester",
+    name: "Discovery requester",
+    about: "Requests document summaries.",
+    capabilities: { names: ["service-discovery"], settlement_networks: ["cashu"] },
+    pricingPolicyReference: "pactagent/requester@1",
+    escrowDescriptorReference: descriptor.address,
+    updatedAt: CREATED_AT - 9,
+  });
+  const providerDefinition = createPontmoreAgentDefinition({
+    identity: provider,
+    identifier: "discovery-provider",
+    name: "Discovery provider",
+    about: "Provides document summaries.",
+    capabilities: { names: ["document-summary"], settlement_networks: ["cashu"] },
+    pricingPolicyReference: offer.address,
+    escrowDescriptorReference: descriptor.address,
+    updatedAt: CREATED_AT - 9,
+  });
+
+  await relay.publish(signDirect(descriptor.event, providerKey));
+  await relay.publish(signDirect(offer.event, providerKey));
+  await relay.publish(signDirect(providerDefinition.event, providerKey));
+  const discovery = await discoverProviders({
+    requesterPolicy: {
+      maxBudgetSats: sats(500n),
+      allowedCapabilities: ["document-summary"],
+      maximumEscrowDurationSeconds: 300,
+      maximumProviderPriceSats: sats(450n),
+      allowedSettlementNetworks: ["cashu"],
+      autoRelease: "deterministic_checks_only",
+    },
+    capability: "document-summary",
+    relay,
+    now: CREATED_AT,
+  });
+  if (!discovery.selected) throw new Error("expected provider discovery selection");
+  return {
+    selection: discovery.selected,
+    requesterDefinition: signDirect(requesterDefinition.event, requesterKey),
+    requesterKey,
+    relay,
+  };
+}
+
 async function publishedContext(
   fixture: ReturnType<typeof createFixture>,
   relay: MemoryRelay,
@@ -209,6 +294,105 @@ async function publishedContext(
 }
 
 describe("PactAgent agreement signer and relay integration", () => {
+  it("creates and publishes an agreement proposal from Issue #9 discovery references", async () => {
+    const fixture = await createDiscoverySelectionFixture();
+    const termsCommitment = createPactTermsCommitment(
+      DOCUMENT_SUMMARY_PROFILE_ID,
+      {
+        source_document: "PRIVATE-DISCOVERY-DOCUMENT",
+        input_media_type: "text/plain",
+        private_prompt: "PRIVATE-DISCOVERY-PROMPT",
+      },
+      new PactPrivateCommitmentSalt(new Uint8Array(32).fill(41)),
+    );
+    const draft = createPactServiceAgreementRootFromDiscovery({
+      requesterDefinition: fixture.requesterDefinition,
+      selection: fixture.selection,
+      agreementId: AGREEMENT_ID,
+      expiresAt: CREATED_AT + 600,
+      termsCommitment,
+      createdAt: CREATED_AT,
+    });
+
+    expect(draft.root.content).toMatchObject({
+      provider: fixture.selection.selected.providerPublicKey,
+      provider_definition: fixture.selection.selected.providerDefinitionReference,
+      escrow_descriptor: fixture.selection.selected.escrowDescriptorReference,
+      amount_sats: "350",
+      maximum_execution_seconds: 120,
+    });
+    expect(draft.references.providerDefinition).toBe(
+      fixture.selection.candidate.definition.event,
+    );
+    expect(draft.references.escrowDescriptor).toBe(
+      fixture.selection.candidate.escrowDescriptor.event,
+    );
+
+    const signed = await signAndPublishPactServiceAgreementRoot({
+      root: draft.root,
+      references: draft.references,
+      signer: new RecordingSigner(fixture.requesterKey),
+      relay: fixture.relay,
+    });
+    const retrieved = await retrievePactServiceAgreementRoot({
+      agreementId: AGREEMENT_ID,
+      references: draft.references,
+      relay: fixture.relay,
+    });
+    expect(retrieved).toEqual(signed);
+  });
+
+  it("rejects a discovery selection whose stable references were altered", async () => {
+    const fixture = await createDiscoverySelectionFixture();
+    const termsCommitment = createPactTermsCommitment(
+      DOCUMENT_SUMMARY_PROFILE_ID,
+      {
+        source_document: "PRIVATE-DISCOVERY-DOCUMENT",
+        input_media_type: "text/plain",
+      },
+      new PactPrivateCommitmentSalt(new Uint8Array(32).fill(42)),
+    );
+    const selection: DiscoverySelection = {
+      ...fixture.selection,
+      selected: {
+        ...fixture.selection.selected,
+        offerReference: `${fixture.selection.selected.offerReference}-altered`,
+      },
+    };
+
+    expect(() =>
+      createPactServiceAgreementRootFromDiscovery({
+        requesterDefinition: fixture.requesterDefinition,
+        selection,
+        expiresAt: CREATED_AT + 600,
+        termsCommitment,
+        createdAt: CREATED_AT,
+      }),
+    ).toThrow(expect.objectContaining({ code: "invalid_reference" }));
+  });
+
+  it("rejects a discovery selection after its authenticated offer expires", async () => {
+    const fixture = await createDiscoverySelectionFixture();
+    const termsCommitment = createPactTermsCommitment(
+      DOCUMENT_SUMMARY_PROFILE_ID,
+      {
+        source_document: "PRIVATE-DISCOVERY-DOCUMENT",
+        input_media_type: "text/plain",
+      },
+      new PactPrivateCommitmentSalt(new Uint8Array(32).fill(43)),
+    );
+
+    expect(() =>
+      createPactServiceAgreementRootFromDiscovery({
+        requesterDefinition: fixture.requesterDefinition,
+        selection: fixture.selection,
+        expiresAt: CREATED_AT + 900,
+        termsCommitment,
+        createdAt: CREATED_AT + 301,
+      }),
+    ).toThrow(expect.objectContaining({ code: "invalid_reference" }));
+  });
+
   it("uses isolated requester and provider signers for proposal and acceptance", async () => {
     const fixture = createFixture();
     const relay = new MemoryRelay();

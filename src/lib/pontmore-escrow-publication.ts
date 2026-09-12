@@ -181,15 +181,11 @@ export async function retrieveCashuEscrowDescriptor(
     throw new Pip01PublicationError("descriptor_not_found", "PIP-01 descriptor was not found");
   }
 
-  const sorted = [...events].sort((left, right) => {
-    const timestampOrder = right.created_at - left.created_at;
-    return timestampOrder === 0 ? left.id.localeCompare(right.id) : timestampOrder;
-  });
-
+  const authenticMatches: SignedNostrEvent[] = [];
   let anyAddressMatch = false;
   let firstError: Pip01PublicationError | undefined;
 
-  for (const raw of sorted) {
+  for (const raw of events) {
     let parsed: SignedNostrEvent;
     try {
       parsed = parseSignedNostrEvent(raw);
@@ -206,26 +202,37 @@ export async function retrieveCashuEscrowDescriptor(
 
     try {
       verifySignedNostrEvent(parsed);
-      const descriptor = parseCashuEscrowDescriptorEvent(parsed);
-      if (descriptor.address !== reference) {
-        throw new Pip01PublicationError(
-          "descriptor_agent_mismatch",
-          "Retrieved PIP-01 descriptor does not match its agent reference",
-        );
-      }
-      return descriptor;
+      authenticMatches.push(parsed);
     } catch (error) {
-      if (error instanceof Pip01PublicationError) throw error;
       if (!firstError) firstError = mapDescriptorValidationError(error);
     }
   }
 
-  if (!anyAddressMatch) {
+  if (authenticMatches.length === 0) {
+    if (anyAddressMatch && firstError) throw firstError;
     throw new Pip01PublicationError(
       "descriptor_agent_mismatch",
       "Relay result does not match the requested PIP-01 descriptor reference",
     );
   }
 
-  throw firstError ?? new Pip01PublicationError("invalid_descriptor", "PIP-01 descriptor is invalid");
+  authenticMatches.sort((left, right) => {
+    const timestampOrder = right.created_at - left.created_at;
+    return timestampOrder === 0 ? left.id.localeCompare(right.id) : timestampOrder;
+  });
+  const current = authenticMatches[0];
+
+  try {
+    const descriptor = parseCashuEscrowDescriptorEvent(current);
+    if (descriptor.address !== reference) {
+      throw new Pip01PublicationError(
+        "descriptor_agent_mismatch",
+        "Retrieved PIP-01 descriptor does not match its agent reference",
+      );
+    }
+    return descriptor;
+  } catch (error) {
+    if (error instanceof Pip01PublicationError) throw error;
+    throw mapDescriptorValidationError(error);
+  }
 }

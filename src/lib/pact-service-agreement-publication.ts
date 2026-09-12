@@ -13,6 +13,7 @@ import {
   PACT_AGREEMENT_TRANSITION_TYPE,
   PACT_SERVICE_AGREEMENT_ROOT_TYPE,
   PactServiceAgreementError,
+  createPactServiceAgreementRoot,
   parsePactAgreementTransitionEvent,
   parsePactServiceAgreementRootEvent,
   reconstructPactAgreementHistory,
@@ -24,7 +25,12 @@ import {
   type PactAgreementReferences,
   type PactAgreementTransition,
   type PactServiceAgreementRoot,
+  type PactTermsCommitment,
 } from "../domain/pact-service-agreement";
+import {
+  parsePactServiceOfferEvent,
+  type PactServiceOffer,
+} from "../domain/pact-service-offer";
 import type {
   NostrFilter,
   NostrRelayAdapter,
@@ -35,6 +41,7 @@ import {
   operationOptions,
   sameUnsignedEvent,
 } from "./pontmore-publication-helpers";
+import type { DiscoverySelection } from "./provider-discovery";
 
 export type PactAgreementPublicationErrorCode =
   | "signing_failure"
@@ -57,6 +64,77 @@ export class PactAgreementPublicationError extends Error {
 export const PACT_AGREEMENT_RELAY_TIMEOUT_MS = 10_000;
 export const PACT_AGREEMENT_DEFAULT_QUERY_LIMIT = 256;
 export const PACT_AGREEMENT_MAX_QUERY_LIMIT = 1_000;
+
+export interface PactAgreementDraftFromDiscovery {
+  readonly root: PactServiceAgreementRoot;
+  readonly references: PactAgreementReferences;
+}
+
+/**
+ * Converts #9's validated provider selection into the exact signed Pontmore
+ * references and provider-offer terms consumed by the #10 agreement root.
+ * Discovery remains non-economic: this constructs an unsigned requester
+ * proposal and performs no signing, publication, acceptance, or settlement.
+ */
+export function createPactServiceAgreementRootFromDiscovery(input: {
+  readonly requesterDefinition: SignedNostrEvent;
+  readonly selection: DiscoverySelection;
+  readonly agreementId?: string;
+  readonly expiresAt: number;
+  readonly termsCommitment: Pick<PactTermsCommitment, "value" | "scheme">;
+  readonly createdAt: number;
+}): PactAgreementDraftFromDiscovery {
+  const { selected, candidate } = input.selection;
+  let offer: PactServiceOffer<SignedNostrEvent>;
+  try {
+    const offerEvent = parseSignedNostrEvent(candidate.offer.event);
+    verifySignedNostrEvent(offerEvent);
+    offer = parsePactServiceOfferEvent(offerEvent);
+  } catch {
+    throw new PactServiceAgreementError(
+      "invalid_reference",
+      "Provider discovery selection contains an invalid signed offer",
+    );
+  }
+
+  if (
+    selected.providerPublicKey !== candidate.providerPublicKey ||
+    selected.providerPublicKey !== candidate.definition.event.pubkey ||
+    selected.providerDefinitionReference !== candidate.definition.address ||
+    selected.escrowDescriptorReference !== candidate.escrowDescriptor.address ||
+    selected.offerReference !== offer.address ||
+    candidate.definition.content.pricing_policy !== offer.address ||
+    offer.content.provider !== selected.providerPublicKey ||
+    offer.content.escrow_descriptor !== selected.escrowDescriptorReference
+  ) {
+    throw new PactServiceAgreementError(
+      "invalid_reference",
+      "Provider discovery selection does not match its validated candidate",
+    );
+  }
+  if (input.createdAt < offer.content.valid_from || input.createdAt > offer.content.expires_at) {
+    throw new PactServiceAgreementError(
+      "invalid_reference",
+      "Selected provider offer is not active at agreement creation",
+    );
+  }
+
+  const references: PactAgreementReferences = {
+    requesterDefinition: input.requesterDefinition,
+    providerDefinition: candidate.definition.event,
+    escrowDescriptor: candidate.escrowDescriptor.event,
+  };
+  const root = createPactServiceAgreementRoot({
+    agreementId: input.agreementId,
+    references,
+    amountSats: offer.content.amount_sats,
+    maximumExecutionSeconds: offer.content.maximum_execution_seconds,
+    expiresAt: input.expiresAt,
+    termsCommitment: input.termsCommitment,
+    createdAt: input.createdAt,
+  });
+  return { root, references };
+}
 
 function queryLimit(value?: number): number {
   const limit = value ?? PACT_AGREEMENT_DEFAULT_QUERY_LIMIT;

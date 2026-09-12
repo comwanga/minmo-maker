@@ -77,6 +77,18 @@ agreement.
 The root is only a proposal. Bilateral acceptance begins with a separate valid
 `accepted` transition signed by the exact provider named in the root.
 
+## Provider-discovery integration
+
+`createPactServiceAgreementRootFromDiscovery` is the narrow boundary from issue
+#9 into this agreement flow. It accepts the requester's signed PIP-00 definition
+and a validated `DiscoverySelection`, revalidates the selected signed offer and
+its stable provider/PIP-00/PIP-01 references, and derives price and execution
+duration from that authenticated offer. A selection whose references were
+altered, or whose offer is no longer active when the agreement is created, is
+rejected. The function returns only an unsigned requester proposal and its
+validated reference set; it does not sign, publish, imply provider acceptance,
+or authorize an economic transition.
+
 ## Commitment and private data
 
 `sha256-salted-canonical-json-v1` hashes canonical JSON containing the exact
