@@ -9,9 +9,9 @@ PactAgent is an open-source framework for bounded economic agents that discover 
 The first pivot phase provides a local, deterministic open-protocol foundation:
 
 - independent public Nostr identities for P001 Requester and P002 Provider;
-- PIP-00-compatible agent-definition drafts and local capability discovery;
+- independently signed PIP-00 agent definitions and relay-backed capability discovery;
 - deterministic pricing, budget, duration, network, and escrow compatibility checks;
-- a PIP-01 `cashu_escrow` descriptor with a PIP-03 recoverable timeout plan;
+- a PIP-01 `cashu_escrow` descriptor alongside the existing swap-specific PIP-03 timeout plan;
 - a relay-backed PactAgent service-agreement lifecycle for `document-summary@1`;
 - one bounded `document-summary` fixture and a transparent UI walkthrough.
 
@@ -19,8 +19,16 @@ The PIP-01 path now constructs a kind `30361` descriptor, signs it through the
 isolated `NostrSigner` boundary, verifies its NIP-01 signature, publishes and
 retrieves it through a narrow relay port, and resolves the PIP-00 `a`-tag
 reference. Deterministic tests use an in-memory relay and synthetic signing key.
-Live transport uses the `NostrRelayAdapter` delivered by issue #4. A production
-signer remains a dependency of issue #6.
+Live transport uses the `NostrRelayAdapter` delivered by issue #4. Event signing
+uses the isolated `NostrSigner` boundary delivered by issue #6; private keys are
+not accepted by the publication layers.
+
+Provider discovery resolves and verifies current signed PIP-00 definitions,
+provider-owned service offers, and compatible PIP-01 descriptors through the
+relay adapter. It returns stable authenticated references without creating an
+agreement or implying provider consent. The issue #10 integration revalidates
+that selection and derives the proposal price and execution bound from the
+selected offer before the requester signs or publishes the immutable root.
 
 The service-agreement path publishes immutable requester proposals and separately
 signed participant transitions as provisional PactAgent kind `3921` regular events.
@@ -64,8 +72,8 @@ npm start
 ## Trust boundary
 
 AI will be a proposal layer, not the trust root. Deterministic policy authorizes
-economic actions, and the production isolated signer supplied by issue #6 will
-sign events without exposing private keys to the model. PactAgent application
+economic actions, and the isolated signer boundary supplied by issue #6 signs
+events without exposing private keys to the model. PactAgent application
 events are authoritative for the service-agreement lifecycle; private task,
 result, and settlement payloads remain outside public events.
 
@@ -74,6 +82,11 @@ The public descriptor wire shape and boundary are documented in the
 [PIP-01 Cashu descriptor flow](docs/pip01-cashu-descriptor.md).
 The application event shape and lifecycle are documented in
 [PactAgent service agreements](docs/pact-service-agreements.md).
+
+## Collaboration
+
+PactAgent is being developed in collaboration with
+[Denver Mtange](https://github.com/mk-Denver).
 
 ## License
 
