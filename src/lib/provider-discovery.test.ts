@@ -759,14 +759,14 @@ describe("relay-backed provider discovery", () => {
       expect(result.candidates[0].definition.event.created_at).toBe(FIXTURE_TIME + 1);
     });
 
-    it("rejects an invalid newer profile rather than falling back to a stale one", async () => {
+    it("ignores a forged newer profile at the same address", async () => {
       const relay = new MemoryNostrRelay();
       const p002 = createProviderBundle(2);
       await publishBundle(p002, relay);
       const validProfile = relay.published.find((e) => e.kind === PIP00_AGENT_DEFINITION_KIND)!;
-      const invalidNewer = { ...validProfile, content: `${validProfile.content} `, created_at: validProfile.created_at + 1 };
+      const forgedNewer = { ...validProfile, content: `${validProfile.content} `, created_at: validProfile.created_at + 1 };
       relay.queryOverride = (filter) => {
-        if (filter.kinds?.includes(PIP00_AGENT_DEFINITION_KIND)) return [invalidNewer, validProfile];
+        if (filter.kinds?.includes(PIP00_AGENT_DEFINITION_KIND)) return [forgedNewer, validProfile];
         return undefined;
       };
       const result = await discoverProviders({
@@ -775,8 +775,43 @@ describe("relay-backed provider discovery", () => {
         relay,
         now: FIXTURE_TIME + 60,
       });
+      expect(result.candidates).toHaveLength(1);
+      expect(result.candidates[0].definition.event.id).toBe(validProfile.id);
+      expect(result.rejections.map((r) => r.category)).toContain("invalid_nostr_event");
+    });
+
+    it("rejects an authentic application-invalid profile replacement", async () => {
+      const relay = new MemoryNostrRelay();
+      const p002 = createProviderBundle(2);
+      await publishBundle(p002, relay);
+      const validProfile = relay.published.find((e) => e.kind === PIP00_AGENT_DEFINITION_KIND)!;
+      const content = JSON.parse(validProfile.content) as Record<string, unknown>;
+      const malformedReplacement = await p002.signer.sign({
+        pubkey: validProfile.pubkey,
+        created_at: validProfile.created_at + 1,
+        kind: validProfile.kind,
+        tags: validProfile.tags.map((tag) => [...tag]),
+        content: JSON.stringify({
+          ...content,
+          version: 2,
+          updated_at: validProfile.created_at + 1,
+        }),
+      });
+      relay.queryOverride = (filter) => {
+        if (filter.kinds?.includes(PIP00_AGENT_DEFINITION_KIND)) {
+          return [malformedReplacement, validProfile];
+        }
+        return undefined;
+      };
+
+      const result = await discoverProviders({
+        requesterPolicy: REQUESTER_POLICY,
+        capability: "document-summary",
+        relay,
+        now: FIXTURE_TIME + 60,
+      });
       expect(result.candidates).toEqual([]);
-      expect(result.rejections.some((r) => r.category === "invalid_pip00_profile" || r.category === "invalid_nostr_event")).toBe(true);
+      expect(result.rejections.map((r) => r.category)).toContain("invalid_pip00_profile");
     });
   });
 
@@ -900,6 +935,66 @@ describe("relay-backed provider discovery", () => {
         now: FIXTURE_TIME + 60,
       });
       expect(result.selected?.selected.providerPublicKey).toBe(expectedWinner);
+    });
+
+    it("selects stable references when one provider has two equal definitions", async () => {
+      const provider = createProviderBundle(2);
+      const secondDescriptor = createCashuEscrowDescriptor({
+        identity: provider.identity,
+        identifier: "cashu-document-summary-b",
+        updatedAt: FIXTURE_TIME,
+        referenceFormat: "opaque_service_reference",
+      });
+      const secondOffer = createPactServiceOffer({
+        identity: provider.identity,
+        identifier: "document-summary-offer-b",
+        capabilityProfile: { id: PACTAGENT_DOCUMENT_SUMMARY_CAPABILITY_ID, version: 1 },
+        amountSats: provider.offer.amountSats,
+        settlementNetwork: "cashu",
+        escrowDescriptorReference: secondDescriptor.address,
+        maximumExecutionSeconds: provider.offer.content.maximum_execution_seconds,
+        validFrom: FIXTURE_TIME,
+        expiresAt: FIXTURE_TIME + 3_600,
+        updatedAt: FIXTURE_TIME,
+      });
+      const secondDefinition = createPontmoreAgentDefinition({
+        identity: provider.identity,
+        identifier: "agent-b",
+        name: "Provider B",
+        about: "Second address for the bounded document-summary service.",
+        capabilities: { names: ["document-summary"], settlement_networks: ["cashu"] },
+        pricingPolicyReference: secondOffer.address,
+        escrowDescriptorReference: secondDescriptor.address,
+        updatedAt: FIXTURE_TIME,
+      });
+
+      const publishSecond = async (relay: NostrRelayAdapter) => {
+        await signAndPublishCashuEscrowDescriptor(secondDescriptor, provider.signer, relay);
+        await signAndPublishPactServiceOffer(secondOffer, provider.signer, relay);
+        await signAndPublishAgentDefinition(secondDefinition, provider.signer, relay);
+      };
+      const relayA = new MemoryNostrRelay();
+      const relayB = new MemoryNostrRelay();
+      await publishBundle(provider, relayA);
+      await publishSecond(relayA);
+      await publishSecond(relayB);
+      await publishBundle(provider, relayB);
+
+      const resultA = await discoverProviders({
+        requesterPolicy: REQUESTER_POLICY,
+        capability: "document-summary",
+        relay: relayA,
+        now: FIXTURE_TIME + 60,
+      });
+      const resultB = await discoverProviders({
+        requesterPolicy: REQUESTER_POLICY,
+        capability: "document-summary",
+        relay: relayB,
+        now: FIXTURE_TIME + 60,
+      });
+      const expectedDefinition = [provider.definition.address, secondDefinition.address].sort()[0];
+      expect(resultA.selected?.selected.providerDefinitionReference).toBe(expectedDefinition);
+      expect(resultB.selected?.selected).toEqual(resultA.selected?.selected);
     });
   });
 

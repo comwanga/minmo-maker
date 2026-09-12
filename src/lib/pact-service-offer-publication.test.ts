@@ -258,15 +258,58 @@ describe("PactAgent service-offer publication", () => {
       expect(retrieved.amountSats).toBe(btcToSats("0.00000300"));
     });
 
-    it("rejects an invalid newer event rather than falling back to a stale offer", async () => {
+    it("ignores a forged newer event and returns the authentic offer", async () => {
       const { signer, offer } = createOfferFixture();
       const relay = new MemoryNostrRelay();
       const valid = await signAndPublishPactServiceOffer(offer, signer, relay);
-      const invalidNewer = { ...valid, content: `${valid.content} `, created_at: valid.created_at + 1 };
-      relay.published.push(invalidNewer);
-      await expect(retrievePactServiceOffer(offer.address, relay)).rejects.toMatchObject({
-        code: "invalid_signature",
+      const forgedNewer = { ...valid, content: `${valid.content} `, created_at: valid.created_at + 1 };
+      relay.published.push(forgedNewer);
+
+      const retrieved = await retrievePactServiceOffer(offer.address, relay);
+      expect(retrieved.event.id).toBe(valid.id);
+    });
+
+    it("rejects an authentic malformed replacement without falling back", async () => {
+      const { signer, offer } = createOfferFixture();
+      const relay = new MemoryNostrRelay();
+      await signAndPublishPactServiceOffer(offer, signer, relay);
+      const content = JSON.parse(offer.event.content) as Record<string, unknown>;
+      const malformedReplacement = await signer.sign({
+        ...offer.event,
+        created_at: offer.event.created_at + 1,
+        content: JSON.stringify({
+          ...content,
+          version: 2,
+          updated_at: offer.event.created_at + 1,
+        }),
       });
+      relay.published.push(malformedReplacement);
+
+      await expect(retrievePactServiceOffer(offer.address, relay)).rejects.toMatchObject({
+        code: "invalid_offer",
+      });
+    });
+
+    it("ignores an unrelated newer relay event", async () => {
+      const { signer, offer } = createOfferFixture();
+      const valid = await signPactServiceOffer(offer, signer);
+      const unrelated = {
+        ...valid,
+        pubkey: nostrPublicKey("ab".repeat(32)),
+        created_at: valid.created_at + 10,
+      } as SignedNostrEvent;
+      const relay: NostrRelayAdapter = {
+        url: "wss://relay.example",
+        async connect() {},
+        async disconnect() {},
+        async publish() {},
+        async queryEvents() {
+          return [unrelated, valid];
+        },
+      };
+
+      const retrieved = await retrievePactServiceOffer(offer.address, relay);
+      expect(retrieved.event.id).toBe(valid.id);
     });
 
     it("rejects not-found", async () => {

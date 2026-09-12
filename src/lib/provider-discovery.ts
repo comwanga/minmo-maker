@@ -237,9 +237,9 @@ function mapDescriptorRetrievalError(error: unknown): DiscoveryRejectionCategory
   return "invalid_descriptor";
 }
 
-async function resolveProfile(
+function verifyProfileEvent(
   raw: SignedNostrEvent,
-): Promise<PontmoreAgentDefinition<SignedNostrEvent> | { rejection: DiscoveryRejection }> {
+): SignedNostrEvent | { rejection: DiscoveryRejection } {
   let parsed: SignedNostrEvent;
   try {
     parsed = parseSignedNostrEvent(raw);
@@ -263,13 +263,19 @@ async function resolveProfile(
     }
     return { rejection: rejection(parsed.pubkey, "invalid_nostr_event", "PIP-00 profile signature verification failed") };
   }
+  return parsed;
+}
+
+function parseProfileDefinition(
+  event: SignedNostrEvent,
+): PontmoreAgentDefinition<SignedNostrEvent> | { rejection: DiscoveryRejection } {
   try {
-    return parsePontmoreAgentDefinitionEvent(parsed);
+    return parsePontmoreAgentDefinitionEvent(event);
   } catch (error) {
     if (error instanceof PontmoreAgentDefinitionError) {
-      return { rejection: rejection(parsed.pubkey, "invalid_pip00_profile", error.message) };
+      return { rejection: rejection(event.pubkey, "invalid_pip00_profile", error.message) };
     }
-    return { rejection: rejection(parsed.pubkey, "invalid_pip00_profile", "PIP-00 profile is invalid") };
+    return { rejection: rejection(event.pubkey, "invalid_pip00_profile", "PIP-00 profile is invalid") };
   }
 }
 
@@ -442,7 +448,9 @@ function compareAuthorizedCandidates(
   if (leftDuration !== rightDuration) {
     return leftDuration < rightDuration ? -1 : 1;
   }
-  return left.providerPublicKey < right.providerPublicKey ? -1 : left.providerPublicKey > right.providerPublicKey ? 1 : 0;
+  const providerOrder = left.providerPublicKey.localeCompare(right.providerPublicKey);
+  if (providerOrder !== 0) return providerOrder;
+  return left.definition.address.localeCompare(right.definition.address);
 }
 
 export async function discoverProviders(input: DiscoverProvidersInput): Promise<DiscoveryResult> {
@@ -480,16 +488,25 @@ export async function discoverProviders(input: DiscoverProvidersInput): Promise<
   let resolutionsRemaining = maxResolutions;
 
   for (const group of groupedProfiles) {
+    let currentAuthentic: SignedNostrEvent | undefined;
+    for (const raw of group.events) {
+      const verified = verifyProfileEvent(raw);
+      if ("rejection" in verified) {
+        rejections.push(verified.rejection);
+        continue;
+      }
+      currentAuthentic = verified;
+      break;
+    }
+    if (!currentAuthentic) continue;
+
     /*
-     * Select only the newest event for this address (replacement ordering).
-     * Unlike the previous fallback approach, a stale older valid event is NOT
-     * used when a newer authentic replacement exists — even if the newer one
-     * is malformed. This prevents selecting superseded definitions/offers and
-     * ensures discovery reflects current live relay data.
+     * Replacement ordering is authoritative only among authentic NIP-01
+     * events. Once selected, the current event must pass PIP-00 validation;
+     * an application-invalid current definition never falls back to a stale
+     * authentic version.
      */
-    const newest = group.events[0];
-    if (!newest) continue;
-    const profile = await resolveProfile(newest);
+    const profile = parseProfileDefinition(currentAuthentic);
     if ("rejection" in profile) {
       rejections.push(profile.rejection);
       continue;
